@@ -34,8 +34,7 @@ final class RecordingLibrary: ObservableObject {
             includingPropertiesForKeys: [.isDirectoryKey],
             options: [.skipsHiddenFiles]
         )
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        let decoder = JSONDecoder.telemetryDecoder
 
         return folders.compactMap { folder in
             guard (try? folder.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { return nil }

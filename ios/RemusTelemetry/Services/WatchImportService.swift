@@ -109,8 +109,7 @@ final class WatchImportService: NSObject, ObservableObject {
 
     private nonisolated static func attachPendingImports() throws {
         let root = try importsDirectory()
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        let decoder = JSONDecoder.telemetryDecoder
         let folders = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey])
         for folder in folders where (try? folder.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
             let metadataURL = folder.appendingPathComponent("transfer.json")
@@ -154,8 +153,7 @@ final class WatchImportService: NSObject, ObservableObject {
         let documents = try FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
         let root = documents.appendingPathComponent("RemusSessions", isDirectory: true)
         guard FileManager.default.fileExists(atPath: root.path) else { return nil }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        let decoder = JSONDecoder.telemetryDecoder
         let folders = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey])
 
         return folders.compactMap { folder -> (URL, TimeInterval)? in
@@ -171,8 +169,7 @@ final class WatchImportService: NSObject, ObservableObject {
 
     private nonisolated static func scanImports() throws -> [WatchImport] {
         let root = try importsDirectory()
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        let decoder = JSONDecoder.telemetryDecoder
         let folders = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey])
         return folders.compactMap { folder in
             guard let data = try? Data(contentsOf: folder.appendingPathComponent("transfer.json")),

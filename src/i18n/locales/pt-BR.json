@@ -36,5 +36,7 @@
   "watch.recover": "Recuperar Dados do Apple Watch",
   "watch.syncTip": "Os treinos gravados no Apple Watch são transferidos automaticamente para o iPhone após a conclusão da sessão.",
   "sessions.share": "Compartilhar ZIP",
-  "sessions.exportSuccess": "Arquivo ZIP gerado com sucesso!"
+  "sessions.exportSuccess": "Arquivo ZIP gerado com sucesso!",
+  "sessions.exportFailed": "Falha ao exportar o arquivo ZIP: {{error}}"
 }
+

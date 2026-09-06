@@ -32,9 +32,9 @@ class AndroidSessionDatabaseWriter(private val context: Context) {
         val database = SQLiteDatabase.openOrCreateDatabase(dbFile, null)
         db = database
 
-        database.execSQL("PRAGMA journal_mode=WAL")
-        database.execSQL("PRAGMA synchronous=NORMAL")
-        database.execSQL("PRAGMA temp_store=MEMORY")
+        database.enableWriteAheadLogging()
+        database.rawQuery("PRAGMA synchronous=NORMAL", null)?.close()
+        database.rawQuery("PRAGMA temp_store=MEMORY", null)?.close()
 
         database.execSQL("""
             CREATE TABLE IF NOT EXISTS motion (
@@ -60,7 +60,7 @@ class AndroidSessionDatabaseWriter(private val context: Context) {
         database.execSQL("CREATE INDEX IF NOT EXISTS motion_elapsed_idx ON motion(elapsed)")
         database.execSQL("CREATE INDEX IF NOT EXISTS location_elapsed_idx ON location(elapsed)")
 
-        motionStmt = database.compileStatement("INSERT INTO motion VALUES (NULL,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        motionStmt = database.compileStatement("INSERT INTO motion VALUES (NULL,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
         locationStmt = database.compileStatement("INSERT INTO location VALUES (NULL,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
 
         database.beginTransactionNonExclusive()
@@ -105,7 +105,7 @@ class AndroidSessionDatabaseWriter(private val context: Context) {
     private fun writeManifest() {
         sessionFolder?.let { folder ->
             val manifestFile = File(folder, "manifest.json")
-            manifestFile.writeText(manifest.toString(2))
+            manifestFile.writeText(manifest?.toString(2) ?: "{}")
         }
     }
 }

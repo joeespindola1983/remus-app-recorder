@@ -112,4 +112,14 @@ class RemusTelemetryModule(private val reactContext: ReactApplicationContext) :
     fun exportSessionZip(sessionId: String, promise: Promise) {
         promise.resolve("/sdcard/Download/$sessionId.zip")
     }
+
+    @ReactMethod
+    fun addListener(eventName: String) {
+        // Keep: Required for RN built-in Event Emitter Calls.
+    }
+
+    @ReactMethod
+    fun removeListeners(count: Int) {
+        // Keep: Required for RN built-in Event Emitter Calls.
+    }
 }

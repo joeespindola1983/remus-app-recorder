@@ -67,3 +67,23 @@ test('creates a valid initial manifest with default counts', () => {
   assert.strictEqual(manifest.databaseFilename, 'telemetry.sqlite');
   assert.strictEqual(manifest.placement, 'hull');
 });
+
+test('parses and validates manifest dates in standard and millisecond ISO8601 format', () => {
+  const parseManifestDate = (dateStr) => {
+    const timestamp = Date.parse(dateStr);
+    if (isNaN(timestamp)) {
+      throw new Error('Invalid date format');
+    }
+    return new Date(timestamp);
+  };
+
+  const isoStandard = '2026-09-05T23:36:38Z';
+  const isoWithMillis = '2026-09-05T23:36:38.123Z';
+
+  const date1 = parseManifestDate(isoStandard);
+  const date2 = parseManifestDate(isoWithMillis);
+
+  assert.strictEqual(date1.toISOString(), '2026-09-05T23:36:38.000Z');
+  assert.strictEqual(date2.toISOString(), '2026-09-05T23:36:38.123Z');
+});
+

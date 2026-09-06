@@ -36,5 +36,6 @@
   "watch.recover": "Recover from Apple Watch",
   "watch.syncTip": "Workouts recorded on Apple Watch are automatically transferred to the iPhone after session completion.",
   "sessions.share": "Share ZIP",
-  "sessions.exportSuccess": "ZIP archive generated successfully!"
+  "sessions.exportSuccess": "ZIP archive generated successfully!",
+  "sessions.exportFailed": "Failed to export ZIP archive: {{error}}"
 }

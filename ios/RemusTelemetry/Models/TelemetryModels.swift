@@ -142,3 +142,39 @@ struct RecordingSession: Identifiable, Equatable {
             .contains { $0.pathExtension.lowercased() == "zip" }
     }
 }
+
+extension JSONDecoder {
+    static var telemetryDecoder: JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            if let dateStr = try? container.decode(String.self) {
+                let isoFormatter = ISO8601DateFormatter()
+                if let date = isoFormatter.date(from: dateStr) {
+                    return date
+                }
+                isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                if let date = isoFormatter.date(from: dateStr) {
+                    return date
+                }
+                if let seconds = Double(dateStr) {
+                    return Date(timeIntervalSince1970: seconds)
+                }
+            } else if let seconds = try? container.decode(Double.self) {
+                if seconds > 100_000_000_000 {
+                    return Date(timeIntervalSince1970: seconds / 1000.0)
+                } else if seconds > 900_000_000 {
+                    return Date(timeIntervalSince1970: seconds)
+                } else {
+                    return Date(timeIntervalSinceReferenceDate: seconds)
+                }
+            }
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Cannot decode date format"
+            )
+        }
+        return decoder
+    }
+}
+

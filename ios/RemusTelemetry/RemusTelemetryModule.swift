@@ -95,8 +95,7 @@ class RemusTelemetryModule: RCTEventEmitter {
             }
 
             let entries = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
+            let decoder = JSONDecoder.telemetryDecoder
             let isoFormatter = ISO8601DateFormatter()
             var sessions: [[String: Any]] = []
 
@@ -174,7 +173,7 @@ class RemusTelemetryModule: RCTEventEmitter {
             }
             let manifestURL = folder.appendingPathComponent("manifest.json")
             let data = try Data(contentsOf: manifestURL)
-            let manifest = try JSONDecoder().decode(RecordingManifest.self, from: data)
+            let manifest = try JSONDecoder.telemetryDecoder.decode(RecordingManifest.self, from: data)
             let session = RecordingSession(manifest: manifest, folderURL: folder, sizeBytes: 0)
             let zipURL = try ZipArchiveService.createArchive(for: session)
             resolve(zipURL.path)
