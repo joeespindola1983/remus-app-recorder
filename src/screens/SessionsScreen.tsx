@@ -8,7 +8,8 @@ import {
   Alert,
   Share,
   Platform,
-  RefreshControl
+  RefreshControl,
+  NativeModules
 } from 'react-native';
 import { t } from '../i18n';
 import { RecordingSessionSummary } from '../types/telemetry';
@@ -41,13 +42,16 @@ export const SessionsScreen: React.FC = () => {
 
   const handleExport = async (sessionId: string) => {
     try {
-      const zipPath = await exportManager.prepareZipForSharing(sessionId);
-      const fileUrl = Platform.OS === 'ios' ? (zipPath.startsWith('file://') ? zipPath : `file://${zipPath}`) : zipPath;
-      await Share.share({
-        title: `Remus Session ${sessionId.substring(0, 8)}`,
-        url: fileUrl,
-        message: `Remus Telemetry Session ${sessionId}`
-      });
+      if (Platform.OS === 'android' && NativeModules.RemusTelemetryModule?.shareSession) {
+        await NativeModules.RemusTelemetryModule.shareSession(sessionId);
+      } else {
+        const zipPath = await exportManager.prepareZipForSharing(sessionId);
+        const fileUrl = Platform.OS === 'ios' ? (zipPath.startsWith('file://') ? zipPath : `file://${zipPath}`) : zipPath;
+        await Share.share({
+          title: `remus-session-${sessionId.substring(0, 8)}`,
+          url: fileUrl
+        });
+      }
     } catch (err: any) {
       if (err.message && !err.message.includes('dismissed')) {
         Alert.alert(t('common.error'), err.message);

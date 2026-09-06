@@ -8,7 +8,8 @@ import {
   Platform,
   SafeAreaView,
   NativeEventEmitter,
-  NativeModules
+  NativeModules,
+  PermissionsAndroid
 } from 'react-native';
 import { t } from '../i18n';
 import { SensorPlacement } from '../types/telemetry';
@@ -76,7 +77,18 @@ export const RecorderScreen: React.FC = () => {
     const subscription = telemetryEmitter.addListener('onTelemetryUpdate', (data: Partial<MetricsState>) => {
       setMetrics(prev => ({ ...prev, ...data }));
     });
-    return () => subscription.remove();
+    return () => {
+      subscription.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      PermissionsAndroid.requestMultiple([
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION
+      ]).catch(console.warn);
+    }
   }, []);
 
   const formatDuration = (seconds: number) => {
@@ -87,6 +99,12 @@ export const RecorderScreen: React.FC = () => {
 
   const handleStart = async () => {
     try {
+      if (Platform.OS === 'android') {
+        await PermissionsAndroid.requestMultiple([
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+          PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION
+        ]);
+      }
       await sessionManager.start({
         deviceModel: Platform.OS === 'ios' ? 'iOS Device' : 'Android Device',
         systemVersion: String(Platform.Version),
