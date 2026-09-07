@@ -4,6 +4,7 @@ export type SensorPlacement =
   | 'right_wrist'
   | 'body'
   | 'oar'
+  | 'paddle'
   | 'unknown';
 
 export const VALID_PLACEMENTS: SensorPlacement[] = [
@@ -12,6 +13,7 @@ export const VALID_PLACEMENTS: SensorPlacement[] = [
   'right_wrist',
   'body',
   'oar',
+  'paddle',
   'unknown'
 ];
 
@@ -71,6 +73,8 @@ export function createInitialManifest(metadata: SessionMetadata): RecordingManif
 }
 
 export interface RecordingSessionSummary {
+  contextCompleteness?: import('./recordingContext').ContextCompleteness;
+  status?: string;
   id: string;
   folderUri: string;
   startedAt: string;

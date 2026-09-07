@@ -1,6 +1,7 @@
 import Foundation
 import React
 import Combine
+import CoreLocation
 
 @objc(RemusTelemetryModule)
 class RemusTelemetryModule: RCTEventEmitter {
@@ -8,6 +9,77 @@ class RemusTelemetryModule: RCTEventEmitter {
     private var activeSessionFolder: URL?
     private var activeSessionID: UUID?
     private var cancellables = Set<AnyCancellable>()
+    private var permissionLocationManager: CLLocationManager?
+
+    @objc
+    func requestPermissions(_ resolve: @escaping RCTPromiseResolveBlock,
+                            rejecter reject: @escaping RCTPromiseRejectBlock) {
+        DispatchQueue.main.async {
+            let manager = self.permissionLocationManager ?? CLLocationManager()
+            self.permissionLocationManager = manager
+            let status = manager.authorizationStatus
+            if status == .notDetermined {
+                manager.requestWhenInUseAuthorization()
+                resolve(["status": "requested", "authorized": false])
+            } else {
+                let authorized = (status == .authorizedWhenInUse || status == .authorizedAlways)
+                resolve(["status": authorized ? "authorized" : "denied", "authorized": authorized])
+            }
+        }
+    }
+
+    @objc
+    func checkPermissions(_ resolve: @escaping RCTPromiseResolveBlock,
+                          rejecter reject: @escaping RCTPromiseRejectBlock) {
+        DispatchQueue.main.async {
+            let status = CLLocationManager().authorizationStatus
+            let authorized = (status == .authorizedWhenInUse || status == .authorizedAlways)
+            let statusStr: String
+            switch status {
+            case .notDetermined: statusStr = "notDetermined"
+            case .restricted: statusStr = "restricted"
+            case .denied: statusStr = "denied"
+            case .authorizedAlways: statusStr = "authorizedAlways"
+            case .authorizedWhenInUse: statusStr = "authorizedWhenInUse"
+            @unknown default: statusStr = "unknown"
+            }
+            resolve(["status": statusStr, "authorized": authorized])
+        }
+    }
+
+    private func sessionRoot() throws -> URL {
+        try FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true).appendingPathComponent("RemusSessions", isDirectory: true)
+    }
+
+    @objc func getRecordingContext(_ recordingId: String, resolver resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
+        do {
+            let folder = try RecordingContextStore.resolve(root: sessionRoot(), id: recordingId)
+            let data = try JSONSerialization.data(withJSONObject: RecordingContextStore.read(folder))
+            resolve(String(decoding: data, as: UTF8.self))
+        } catch { reject("CONTEXT_ERROR", error.localizedDescription, error) }
+    }
+
+    @objc func saveRecordingContext(_ recordingId: String, json: String, finalize: Bool, resolver resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
+        do {
+            let folder = try RecordingContextStore.resolve(root: sessionRoot(), id: recordingId)
+            let context = try RecordingContextStore.save(folder, json: json, finalize: finalize)
+            resolve(String(decoding: try JSONSerialization.data(withJSONObject: context), as: UTF8.self))
+        } catch { reject("CONTEXT_ERROR", error.localizedDescription, error) }
+    }
+
+    @objc func getRecordingState(_ resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+        DispatchQueue.main.async {
+            var state: [String: Any] = ["isRecording": self.recorder != nil]
+            if let id = self.activeSessionID, self.recorder != nil {
+                state["sessionId"] = id.uuidString
+                if let folder = self.activeSessionFolder, let m = try? RecordingContextStore.manifest(folder),
+                   let date = m["startedAt"] as? String, let started = RecordingContextStore.parseDate(date) {
+                    state["elapsedSeconds"] = max(0, Date().timeIntervalSince(started))
+                }
+            }
+            resolve(state)
+        }
+    }
     
     override func supportedEvents() -> [String]! {
         return ["onTelemetryUpdate"]
@@ -19,6 +91,7 @@ class RemusTelemetryModule: RCTEventEmitter {
                         rejecter reject: @escaping RCTPromiseRejectBlock) {
         
         DispatchQueue.main.async {
+            guard self.recorder == nil else { reject("ALREADY_RECORDING", "A recording is already in progress", nil); return }
             let recorder = SensorRecorder()
             self.recorder = recorder
             
@@ -29,25 +102,96 @@ class RemusTelemetryModule: RCTEventEmitter {
                     self.sendEvent(withName: "onTelemetryUpdate", body: [
                         "speedKmh": speed,
                         "distanceMeters": rec.distanceMeters,
-                        "courseDegrees": (rec.courseDegrees ?? 0) as Any,
-                        "headingDegrees": (rec.headingDegrees ?? 0) as Any,
+                        "courseDegrees": rec.courseDegrees.map { $0 as Any } ?? NSNull(),
+                        "headingDegrees": rec.headingDegrees.map { $0 as Any } ?? NSNull(),
                         "accelerationG": rec.accelerationG,
-                        "rotationRateRad": rec.rotationRate,
+                        "gpsAccuracyMeters": rec.horizontalAccuracyMeters.map { $0 as Any } ?? NSNull(),
                         "gpsRateHz": rec.measuredGPSHertz,
                         "imuSamples": rec.sampleCount
                     ])
                 }
                 .store(in: &self.cancellables)
 
-            // Start recording
-            self.recorder?.start()
-            // In the real app, we need to wait for GPS fix before recording starts (SensorRecorder handles this internally)
-            
-            // For now, resolve immediately to unblock the UI
-            resolve([
-                "sessionId": UUID().uuidString,
-                "folderUri": ""
-            ])
+            recorder.$horizontalAccuracyMeters
+                .sink { [weak self] accuracy in
+                    guard let self = self, let rec = self.recorder else { return }
+                    self.sendEvent(withName: "onTelemetryUpdate", body: [
+                        "speedKmh": rec.currentSpeedKilometersPerHour,
+                        "distanceMeters": rec.distanceMeters,
+                        "courseDegrees": rec.courseDegrees.map { $0 as Any } ?? NSNull(),
+                        "headingDegrees": rec.headingDegrees.map { $0 as Any } ?? NSNull(),
+                        "accelerationG": rec.accelerationG,
+                        "gpsAccuracyMeters": accuracy.map { $0 as Any } ?? NSNull(),
+                        "gpsRateHz": rec.measuredGPSHertz,
+                        "imuSamples": rec.sampleCount
+                    ])
+                }
+                .store(in: &self.cancellables)
+
+            recorder.$rotationVector.sink { [weak self] vector in
+                self?.sendEvent(withName: "onTelemetryUpdate", body: [
+                    "rotationXRad": vector.map { $0.x as Any } ?? NSNull(),
+                    "rotationYRad": vector.map { $0.y as Any } ?? NSNull(),
+                    "rotationZRad": vector.map { $0.z as Any } ?? NSNull()
+                ])
+            }.store(in: &self.cancellables)
+
+            // SensorRecorder already fetches and writes Open-Meteo snapshots.
+            // Forward them to the shared React Native recorder UI as well.
+            recorder.$weather
+                .sink { [weak self] snapshot in
+                    guard let self, let snapshot else { return }
+                    self.sendEvent(withName: "onTelemetryUpdate", body: [
+                        "weatherStatus": "Updated",
+                        "weatherTemperatureC": snapshot.temperatureCelsius.map { $0 as Any } ?? NSNull(),
+                        "weatherHumidityPercent": snapshot.relativeHumidityPercent.map { $0 as Any } ?? NSNull(),
+                        "weatherWindKmh": snapshot.windSpeedKilometersPerHour.map { $0 as Any } ?? NSNull()
+                    ])
+                }
+                .store(in: &self.cancellables)
+
+            recorder.$weatherStatus
+                .sink { [weak self] status in
+                    self?.sendEvent(withName: "onTelemetryUpdate", body: ["weatherStatus": status])
+                }
+                .store(in: &self.cancellables)
+
+            let sessionIdStr = (params["sessionId"] as? String) ?? UUID().uuidString
+            let sessionUUID = UUID(uuidString: sessionIdStr) ?? UUID()
+            let notes = (params["notes"] as? String) ?? ""
+            let motionFreq = (params["motionFrequencyHertz"] as? Double) ?? 100.0
+            let placement = (params["placement"] as? String) ?? "unknown"
+
+            let metadata = SessionMetadata(
+                sessionID: sessionUUID,
+                startedAt: Date(),
+                appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",
+                deviceModel: UIDevice.current.model,
+                systemVersion: UIDevice.current.systemVersion,
+                motionFrequencyHertz: motionFreq,
+                notes: notes,
+                placement: placement,
+                schemaVersion: "1.0.0",
+                producer: "remus-app-recorder",
+                producerPlatform: "ios",
+                orientationUnits: "radians"
+            )
+
+            do {
+                let folder = try recorder.startImmediately(metadata: metadata)
+                _ = try RecordingContextStore.read(folder, capture: true)
+                self.activeSessionFolder = folder
+                self.activeSessionID = sessionUUID
+                resolve([
+                    "sessionId": sessionUUID.uuidString,
+                    "folderUri": folder.path
+                ])
+            } catch {
+                recorder.stop()
+                self.recorder = nil
+                self.cancellables.removeAll()
+                reject("START_ERROR", "Failed to start telemetry recording: \(error.localizedDescription)", error)
+            }
         }
     }
 
@@ -119,6 +263,8 @@ class RemusTelemetryModule: RCTEventEmitter {
                 let duration = (manifest.endedAt ?? Date()).timeIntervalSince(manifest.startedAt)
                 let watchFolder = folder.appendingPathComponent("watch")
                 let hasWatch = FileManager.default.fileExists(atPath: watchFolder.path)
+                let contextData = try? Data(contentsOf: folder.appendingPathComponent(RecordingContextStore.filename))
+                let context = contextData.flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] }
 
                 sessions.append([
                     "id": manifest.id.uuidString,
@@ -127,14 +273,20 @@ class RemusTelemetryModule: RCTEventEmitter {
                     "endedAt": manifest.endedAt.map { isoFormatter.string(from: $0) } ?? "",
                     "sampleCount": manifest.motionSampleCount,
                     "durationSeconds": max(0, duration),
-                    "placement": "hull",
+                    "placement": context?["sensorPlacement"] as? String ?? manifest.placement,
                     "sizeBytes": folderSize,
-                    "hasWatchRecording": hasWatch
+                    "hasWatchRecording": hasWatch,
+                    "status": manifest.status.rawValue,
+                    "contextCompleteness": context?["contextCompleteness"] as? String ?? "needs_required_context"
                 ])
             }
 
-            sessions.sort { ($0["startedAt"] as? String ?? "") > ($1["startedAt"] as? String ?? "") }
-            resolve(sessions)
+            let sortedSessions = sessions.sorted { (a, b) -> Bool in
+                let startA = (a["startedAt"] as? String) ?? ""
+                let startB = (b["startedAt"] as? String) ?? ""
+                return startA > startB
+            }
+            resolve(sortedSessions)
         } catch {
             reject("LIST_ERROR", error.localizedDescription, error)
         }
@@ -163,14 +315,21 @@ class RemusTelemetryModule: RCTEventEmitter {
     func exportSessionZip(_ sessionId: String,
                           resolver resolve: @escaping RCTPromiseResolveBlock,
                           rejecter reject: @escaping RCTPromiseRejectBlock) {
+        exportArchive(sessionId, raw: false, resolve: resolve, reject: reject)
+    }
+
+    @objc func exportRawSessionZip(_ sessionId: String, resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+        exportArchive(sessionId, raw: true, resolve: resolve, reject: reject)
+    }
+
+    private func exportArchive(_ sessionId: String, raw: Bool, resolve: RCTPromiseResolveBlock, reject: RCTPromiseRejectBlock) {
         do {
             let documents = try FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
             let root = documents.appendingPathComponent("RemusSessions", isDirectory: true)
-            let entries = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
-            guard let folder = entries.first(where: { $0.lastPathComponent.contains(sessionId.prefix(8)) }) else {
-                reject("NOT_FOUND", "Session folder not found: \(sessionId)", nil)
-                return
-            }
+            let folder = try RecordingContextStore.resolve(root: root, id: sessionId)
+            let context = try RecordingContextStore.read(folder)
+            guard context["captureStatus"] as? String != "recording" else { throw RecordingContextStore.error("Stop recording before exporting") }
+            if !raw { try RecordingContextStore.requireComplete(folder) }
             let manifestURL = folder.appendingPathComponent("manifest.json")
             let data = try Data(contentsOf: manifestURL)
             let manifest = try JSONDecoder.telemetryDecoder.decode(RecordingManifest.self, from: data)

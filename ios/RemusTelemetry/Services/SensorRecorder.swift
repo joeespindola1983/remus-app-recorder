@@ -27,6 +27,7 @@ final class SensorRecorder: NSObject, ObservableObject {
     @Published private(set) var horizontalAccuracyMeters: Double?
     @Published private(set) var accelerationG = 0.0
     @Published private(set) var rotationRate = 0.0
+    @Published private(set) var rotationVector: Vector3?
     @Published private(set) var relativeAltitudeMeters: Double?
     @Published private(set) var pressureKilopascals: Double?
     @Published private(set) var weather: WeatherSnapshot?
@@ -43,7 +44,7 @@ final class SensorRecorder: NSObject, ObservableObject {
 
     private let locationManager = CLLocationManager()
     private let motionCaptureService = MotionCaptureService()
-    private let motionReferenceFrame = MotionCaptureService.preferredReferenceFrame()
+    private var motionReferenceFrame = MotionCaptureService.preferredReferenceFrame()
     private let altimeter = CMAltimeter()
     private let databaseWriter = SessionDatabaseWriter()
     private let weatherService = WeatherService()
@@ -70,8 +71,8 @@ final class SensorRecorder: NSObject, ObservableObject {
         locationManager.distanceFilter = kCLDistanceFilterNone
         locationManager.activityType = .fitness
         locationManager.pausesLocationUpdatesAutomatically = false
-        locationManager.allowsBackgroundLocationUpdates = false
-        locationManager.showsBackgroundLocationIndicator = false
+        locationManager.allowsBackgroundLocationUpdates = true
+        locationManager.showsBackgroundLocationIndicator = true
         locationManager.headingFilter = kCLHeadingFilterNone
         locationManager.headingOrientation = .portrait
         databaseWriter.onError = { [weak self] error in
@@ -81,8 +82,11 @@ final class SensorRecorder: NSObject, ObservableObject {
 
     var isRecording: Bool { state == .recording }
 
-    func start() {
+    private var pendingMetadata: SessionMetadata?
+
+    func start(metadata: SessionMetadata? = nil) {
         guard !isRecording, !isRequestingLocationPermission else { return }
+        self.pendingMetadata = metadata
         attemptedTemporaryFullAccuracy = false
 
         switch locationManager.authorizationStatus {
@@ -106,6 +110,32 @@ final class SensorRecorder: NSObject, ObservableObject {
         @unknown default:
             state = .failed("Unknown location authorization status.")
         }
+    }
+
+    func startImmediately(metadata: SessionMetadata) throws -> URL {
+        self.pendingMetadata = metadata
+        let now = metadata.startedAt
+        let startUptime = ProcessInfo.processInfo.systemUptime
+        let folder = try databaseWriter.start(metadata: metadata)
+        lastSessionURL = folder
+        resetLiveValues()
+        startedAt = now
+        sessionStartUptime = startUptime
+        state = .recording
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        UIApplication.shared.isIdleTimerDisabled = true
+
+        if locationManager.authorizationStatus == .notDetermined {
+            locationManager.requestWhenInUseAuthorization()
+        }
+        locationManager.startUpdatingLocation()
+        if CLLocationManager.headingAvailable() {
+            locationManager.startUpdatingHeading()
+        }
+        startMotion()
+        startAltimeter()
+        startWorkoutOnWatch()
+        return folder
     }
 
     func refreshAuthorizationStatus() {
@@ -166,14 +196,15 @@ final class SensorRecorder: NSObject, ObservableObject {
         guard !isRecording else { return }
         let now = Date()
         let startUptime = ProcessInfo.processInfo.systemUptime
-        let metadata = SessionMetadata(
+        let metadata = pendingMetadata ?? SessionMetadata(
             sessionID: UUID(),
             startedAt: now,
             appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",
             deviceModel: UIDevice.current.model,
             systemVersion: UIDevice.current.systemVersion,
             motionFrequencyHertz: 100,
-            notes: "100 Hz inertial telemetry with independent GPS, heading, altimeter, device and weather streams. Motion reference frame: \(MotionCaptureService.name(of: motionReferenceFrame))."
+            notes: "100 Hz inertial telemetry with independent GPS, heading, altimeter, device and weather streams. Motion reference frame: \(MotionCaptureService.name(of: motionReferenceFrame)).",
+            placement: "unknown"
         )
 
         do {
@@ -337,6 +368,7 @@ final class SensorRecorder: NSObject, ObservableObject {
                     self.queuedWrites = update.queuedWrites
                     self.accelerationG = update.accelerationG
                     self.rotationRate = update.rotationRate
+                    self.rotationVector = update.rotationVector
                     self.measuredMotionHertz = update.measuredHertz
                     self.sensorStatus = "IMU active · \(update.measuredHertz.formatted(.number.precision(.fractionLength(1)))) Hz measured"
 
@@ -350,9 +382,32 @@ final class SensorRecorder: NSObject, ObservableObject {
             },
             onError: { [weak self] error in
                 guard let self else { return }
-                Task { @MainActor in self.fail(error.localizedDescription) }
+                Task { @MainActor in self.handleMotionError(error) }
             }
         )
+    }
+
+    private func handleMotionError(_ error: Error) {
+        let current = motionReferenceFrame
+        let nextFrame: CMAttitudeReferenceFrame?
+
+        if current == .xTrueNorthZVertical {
+            nextFrame = .xMagneticNorthZVertical
+        } else if current == .xMagneticNorthZVertical {
+            nextFrame = .xArbitraryCorrectedZVertical
+        } else if current == .xArbitraryCorrectedZVertical {
+            nextFrame = .xArbitraryZVertical
+        } else {
+            nextFrame = nil
+        }
+
+        if let next = nextFrame {
+            motionReferenceFrame = next
+            motionCaptureService.stop()
+            startMotion()
+        } else {
+            fail(error.localizedDescription)
+        }
     }
 
     private func startAltimeter() {
@@ -512,6 +567,12 @@ extension SensorRecorder: CLLocationManagerDelegate {
         Task { @MainActor in
             let status = manager.authorizationStatus
             updateAuthorizationStatus(status)
+            if isRecording && (status == .authorizedWhenInUse || status == .authorizedAlways) {
+                manager.startUpdatingLocation()
+                if CLLocationManager.headingAvailable() {
+                    manager.startUpdatingHeading()
+                }
+            }
             switch status {
             case .authorizedWhenInUse where startAfterAuthorization,
                  .authorizedAlways where startAfterAuthorization:
@@ -613,6 +674,7 @@ private final class MotionCaptureService {
         let measuredHertz: Double
         let accelerationG: Double
         let rotationRate: Double
+        let rotationVector: Vector3
         let queuedWrites: Int
         let sensorUptime: TimeInterval
     }
@@ -628,9 +690,9 @@ private final class MotionCaptureService {
 
     static func preferredReferenceFrame() -> CMAttitudeReferenceFrame {
         let available = CMMotionManager.availableAttitudeReferenceFrames()
-        if available.contains(.xTrueNorthZVertical) { return .xTrueNorthZVertical }
         if available.contains(.xMagneticNorthZVertical) { return .xMagneticNorthZVertical }
-        return .xArbitraryCorrectedZVertical
+        if available.contains(.xArbitraryCorrectedZVertical) { return .xArbitraryCorrectedZVertical }
+        return .xArbitraryZVertical
     }
 
     static func name(of frame: CMAttitudeReferenceFrame) -> String {
@@ -690,6 +752,7 @@ private final class MotionCaptureService {
                 measuredHertz: Double(sampleCount - 1) / (motion.timestamp - firstTimestamp),
                 accelerationG: sample.userAccelerationG.magnitude,
                 rotationRate: sample.rotationRateRadiansPerSecond.magnitude,
+                rotationVector: sample.rotationRateRadiansPerSecond,
                 queuedWrites: writer.queuedWriteCount,
                 sensorUptime: motion.timestamp
             ))

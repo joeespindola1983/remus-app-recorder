@@ -34,21 +34,26 @@ export class SessionManager {
   }
 
   async stop(): Promise<RecordingManifest> {
-    if (!this.recording) {
-      throw new Error('No recording session in progress');
-    }
+    const manifest = await this.bridge.stopRecording();
+    this.recording = false;
+    this.currentSessionId = undefined;
+    return manifest;
+  }
 
-    try {
-      const manifest = await this.bridge.stopRecording();
-      return manifest;
-    } finally {
-      this.recording = false;
-      this.currentSessionId = undefined;
-    }
+  async restore(): Promise<boolean> {
+    const state = await this.bridge.getRecordingState();
+    this.recording = state.isRecording;
+    this.currentSessionId = state.sessionId;
+    return state.isRecording;
   }
 
   async list(): Promise<RecordingSessionSummary[]> {
-    return await this.bridge.listSessions();
+    const list = await this.bridge.listSessions();
+    return [...list].sort((a, b) => {
+      const timeA = a.startedAt ? new Date(a.startedAt).getTime() : 0;
+      const timeB = b.startedAt ? new Date(b.startedAt).getTime() : 0;
+      return timeB - timeA;
+    });
   }
 
   async delete(sessionId: string): Promise<boolean> {

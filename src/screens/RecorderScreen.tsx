@@ -15,47 +15,61 @@ import { t } from '../i18n';
 import { SensorPlacement } from '../types/telemetry';
 import { SessionManager } from '../services/sessionManager';
 import { telemetryBridge } from '../services/telemetryBridge';
+import { analyticsService } from '../services/analyticsService';
+import { RecordingContextForm } from './RecordingContextForm';
+import { normalizeTelemetryEvent } from '../services/telemetryAdapter';
+import { APP_DISPLAY_VERSION } from '../version';
 
 const sessionManager = new SessionManager(telemetryBridge);
 const { RemusTelemetryModule } = NativeModules;
 const telemetryEmitter = RemusTelemetryModule ? new NativeEventEmitter(RemusTelemetryModule) : null;
 
-// Mock metrics state interface
+// Canonical product view; raw producer schemas are adapted at the event boundary.
 interface MetricsState {
-  speedKmh: number;
-  distanceMeters: number;
-  courseDegrees: number;
-  headingDegrees: number;
-  accelerationG: number;
-  rotationRateRad: number;
-  gpsAccuracyMeters: number | null;
-  gpsRateHz: number;
-  imuSamples: number;
+  groundSpeedMetersPerSecond: number | null;
+  distanceMeters: number | null;
+  courseDegrees: number | null;
+  headingDegrees: number | null;
+  accelerationG: number | null;
+  rotationRateRadiansPerSecond: {x: number; y: number; z: number} | null;
+  horizontalAccuracyMeters: number | null;
+  samplingRateHertz: number | null;
+  imuSamples: number | null;
   altitudeMeters: number | null;
   pressureKPa: number | null;
-  heartRateBpm: number | null;
+  heartRateBeatsPerMinute: number | null;
+  weatherStatus: string;
+  airTemperatureCelsius: number | null;
+  weatherHumidityPercent: number | null;
+  windSpeedMetersPerSecond: number | null;
 }
 
 export const RecorderScreen: React.FC = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [isAcquiringGPS, setIsAcquiringGPS] = useState(false);
   const [duration, setDuration] = useState(0);
-  const [placement] = useState<SensorPlacement>('hull');
+  const [placement] = useState<SensorPlacement>('unknown');
+  const [pendingRecordingId, setPendingRecordingId] = useState<string | null>(null);
+  const [transitioning, setTransitioning] = useState(false);
 
-  // Placeholder for real-time metrics that will come from NativeEventEmitter
+  // A missing observation is not a measured zero.
   const [metrics, setMetrics] = useState<MetricsState>({
-    speedKmh: 0,
-    distanceMeters: 0,
-    courseDegrees: 0,
-    headingDegrees: 0,
-    accelerationG: 0,
-    rotationRateRad: 0,
-    gpsAccuracyMeters: null,
-    gpsRateHz: 0,
+    groundSpeedMetersPerSecond: null,
+    distanceMeters: null,
+    courseDegrees: null,
+    headingDegrees: null,
+    accelerationG: null,
+    rotationRateRadiansPerSecond: null,
+    horizontalAccuracyMeters: null,
+    samplingRateHertz: null,
     imuSamples: 0,
     altitudeMeters: null,
     pressureKPa: null,
-    heartRateBpm: null
+    heartRateBeatsPerMinute: null,
+    weatherStatus: 'Waiting for location…',
+    airTemperatureCelsius: null,
+    weatherHumidityPercent: null,
+    windSpeedMetersPerSecond: null
   });
 
   useEffect(() => {
@@ -73,9 +87,28 @@ export const RecorderScreen: React.FC = () => {
   }, [isRecording]);
 
   useEffect(() => {
+    let mounted = true;
+    const restoreRecording = async () => {
+      try {
+        const state = await telemetryBridge.getRecordingState();
+        if (!mounted) return;
+        setIsRecording(state.isRecording);
+        setDuration(Math.max(0, Math.floor(state.elapsedSeconds ?? 0)));
+        if (state.motionSampleCount !== undefined) {
+          setMetrics(prev => ({ ...prev, imuSamples: state.motionSampleCount ?? 0 }));
+        }
+      } catch (err) {
+        analyticsService.recordError(err, 'RecorderScreen:restoreRecording');
+      }
+    };
+    restoreRecording();
+    return () => { mounted = false; };
+  }, []);
+
+  useEffect(() => {
     if (!telemetryEmitter) return;
     const subscription = telemetryEmitter.addListener('onTelemetryUpdate', (data: Partial<MetricsState>) => {
-      setMetrics(prev => ({ ...prev, ...data }));
+      setMetrics(prev => ({ ...prev, ...normalizeTelemetryEvent(data) }));
     });
     return () => {
       subscription.remove();
@@ -83,12 +116,7 @@ export const RecorderScreen: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (Platform.OS === 'android') {
-      PermissionsAndroid.requestMultiple([
-        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-        PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION
-      ]).catch(console.warn);
-    }
+    telemetryBridge.requestPermissions().catch(console.warn);
   }, []);
 
   const formatDuration = (seconds: number) => {
@@ -98,14 +126,12 @@ export const RecorderScreen: React.FC = () => {
   };
 
   const handleStart = async () => {
+    if (transitioning) return;
+    setTransitioning(true);
     try {
-      if (Platform.OS === 'android') {
-        await PermissionsAndroid.requestMultiple([
-          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-          PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION
-        ]);
-      }
-      await sessionManager.start({
+      await sessionManager.restore();
+      await telemetryBridge.requestPermissions();
+      const res = await sessionManager.start({
         deviceModel: Platform.OS === 'ios' ? 'iOS Device' : 'Android Device',
         systemVersion: String(Platform.Version),
         motionFrequencyHertz: 100,
@@ -113,17 +139,37 @@ export const RecorderScreen: React.FC = () => {
         notes: ''
       });
       setIsRecording(true);
+      setDuration(0);
+      await analyticsService.logRecordingStarted({
+        sessionId: res.sessionId,
+        sensorProfile: placement,
+      });
     } catch (err: any) {
       console.error(err);
+      analyticsService.recordError(err, 'RecorderScreen:handleStart');
+    } finally {
+      setTransitioning(false);
     }
   };
 
   const handleStop = async () => {
+    if (transitioning) return;
+    setTransitioning(true);
     try {
-      await sessionManager.stop();
+      const manifest = await sessionManager.stop();
       setIsRecording(false);
+      setPendingRecordingId(manifest.id);
+      await analyticsService.logRecordingStopped({
+        sessionId: manifest.id,
+        durationSeconds: duration,
+        motionSampleCount: manifest.motionSampleCount,
+        locationSampleCount: manifest.locationSampleCount,
+      });
     } catch (err: any) {
       console.error(err);
+      analyticsService.recordError(err, 'RecorderScreen:handleStop');
+    } finally {
+      setTransitioning(false);
     }
   };
 
@@ -135,8 +181,17 @@ export const RecorderScreen: React.FC = () => {
     </View>
   );
 
+  const rotationValue = () => {
+    const vector = metrics.rotationRateRadiansPerSecond;
+    if (vector === null) {
+      return 'Indisponível';
+    }
+    return `X ${vector.x.toFixed(2)} · Y ${vector.y.toFixed(2)} · Z ${vector.z.toFixed(2)}`;
+  };
+
   return (
     <SafeAreaView style={styles.safeArea}>
+      {pendingRecordingId && <RecordingContextForm recordingId={pendingRecordingId} onClose={() => setPendingRecordingId(null)} />}
       <ScrollView contentContainerStyle={styles.container}>
         
         {/* Recording Card */}
@@ -145,7 +200,7 @@ export const RecorderScreen: React.FC = () => {
             <View style={styles.statusRow}>
               <View style={[styles.dot, { backgroundColor: isRecording ? '#EF4444' : '#64748B' }]} />
               <Text style={styles.statusText}>
-                {isRecording ? 'Recording' : (isAcquiringGPS ? 'Acquiring GPS' : 'Ready')}
+                {isRecording ? t('recorder.status.recording') : (isAcquiringGPS ? t('recorder.status.acquiringGps') : t('recorder.status.ready'))}
               </Text>
             </View>
             {isRecording && (
@@ -159,35 +214,50 @@ export const RecorderScreen: React.FC = () => {
               isRecording ? styles.stopButton : styles.startButton
             ]}
             onPress={isRecording ? handleStop : handleStart}
+            disabled={transitioning}
           >
             <Text style={styles.mainButtonText}>
-              {isRecording ? 'Stop recording' : 'Start recording'}
+              {isRecording ? t('recording.stop') : t('recording.start')}
             </Text>
           </TouchableOpacity>
+
+          {isRecording && (
+            <View style={styles.tipContainer}>
+              <Text style={styles.tipIcon}>💡</Text>
+              <Text style={styles.tipText}>{t('recording.screenOffTip')}</Text>
+            </View>
+          )}
         </View>
 
         {/* Metrics Grid */}
         <View style={styles.metricsGrid}>
-          {renderMetricTile('Speed', metrics.speedKmh.toFixed(1), 'km/h')}
-          {renderMetricTile('Distance', metrics.distanceMeters.toFixed(0), 'm')}
-          {renderMetricTile('Course', `${metrics.courseDegrees.toFixed(0)}°`, 'movement')}
-          {renderMetricTile('Heading', `${metrics.headingDegrees.toFixed(0)}°`, 'phone')}
-          {renderMetricTile('Acceleration', metrics.accelerationG.toFixed(3), 'g')}
-          {renderMetricTile('Rotation', metrics.rotationRateRad.toFixed(3), 'rad/s')}
-          {renderMetricTile('GPS accuracy', metrics.gpsAccuracyMeters ? metrics.gpsAccuracyMeters.toFixed(0) : '—', 'm')}
-          {renderMetricTile('GPS rate', metrics.gpsRateHz.toFixed(2), 'Hz delivered')}
-          {renderMetricTile('IMU samples', metrics.imuSamples.toString(), '100 Hz target')}
-          {renderMetricTile('Rel. altitude', metrics.altitudeMeters ? metrics.altitudeMeters.toFixed(1) : '—', 'm')}
-          {renderMetricTile('Pressure', metrics.pressureKPa ? metrics.pressureKPa.toFixed(2) : '—', 'kPa')}
-          {renderMetricTile('Heart Rate', metrics.heartRateBpm ? metrics.heartRateBpm.toString() : '—', 'bpm (Watch/BLE)')}
+          {renderMetricTile('Speed', metrics.groundSpeedMetersPerSecond === null ? '—' : (metrics.groundSpeedMetersPerSecond * 3.6).toFixed(1), 'km/h')}
+          {renderMetricTile('Distance', metrics.distanceMeters?.toFixed(0) ?? '—', 'm')}
+          {renderMetricTile('Course', metrics.courseDegrees === null ? '—' : `${metrics.courseDegrees.toFixed(0)}°`, 'movement')}
+          {renderMetricTile('Heading', metrics.headingDegrees === null ? '—' : `${metrics.headingDegrees.toFixed(0)}°`, 'phone')}
+          {renderMetricTile('Acceleration', metrics.accelerationG?.toFixed(3) ?? '—', 'g')}
+          {renderMetricTile('Rotation (X/Y/Z)', rotationValue(), 'rad/s')}
+          {renderMetricTile('GPS accuracy', metrics.horizontalAccuracyMeters !== null ? metrics.horizontalAccuracyMeters.toFixed(0) : '—', 'm')}
+          {renderMetricTile('GPS rate', metrics.samplingRateHertz?.toFixed(2) ?? '—', 'Hz delivered')}
+          {renderMetricTile('IMU samples', metrics.imuSamples?.toString() ?? '—', '100 Hz target')}
+          {renderMetricTile('Rel. altitude', metrics.altitudeMeters !== null ? metrics.altitudeMeters.toFixed(1) : '—', 'm')}
+          {renderMetricTile('Pressure', metrics.pressureKPa !== null ? metrics.pressureKPa.toFixed(2) : '—', 'kPa')}
+          {renderMetricTile('Heart Rate', metrics.heartRateBeatsPerMinute ? metrics.heartRateBeatsPerMinute.toString() : '—', 'bpm (Watch/BLE)')}
         </View>
 
-        {/* Weather Card Placeholder */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Weather</Text>
-          <Text style={styles.secondaryText}>Waiting for location...</Text>
+          {metrics.airTemperatureCelsius === null ? (
+            <Text style={styles.secondaryText}>{metrics.weatherStatus}</Text>
+          ) : (
+            <Text style={styles.secondaryText}>
+              {metrics.airTemperatureCelsius.toFixed(1)}°C · {metrics.weatherHumidityPercent?.toFixed(0) ?? '—'}% humidity · {(metrics.windSpeedMetersPerSecond === null ? undefined : (metrics.windSpeedMetersPerSecond * 3.6).toFixed(1)) ?? '—'} km/h wind
+            </Text>
+          )}
         </View>
-
+        <View style={styles.versionFooter}>
+          <Text style={styles.versionFooterText}>{APP_DISPLAY_VERSION}</Text>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -287,5 +357,34 @@ const styles = StyleSheet.create({
   secondaryText: {
     color: '#94A3B8',
     fontSize: 14
+  },
+  tipContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0F172A',
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: '#334155'
+  },
+  tipIcon: {
+    fontSize: 16,
+    marginRight: 8
+  },
+  tipText: {
+    color: '#94A3B8',
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  versionFooter: {
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  versionFooterText: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '500',
   }
 });
