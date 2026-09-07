@@ -46,3 +46,8 @@ local.properties
 
 # Bundle artifact
 *.jsbundle
+android/app/src/main/assets/
+
+# Release distributions
+dist/
+*.apk

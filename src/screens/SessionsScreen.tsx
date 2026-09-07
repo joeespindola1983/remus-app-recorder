@@ -16,6 +16,10 @@ import { RecordingSessionSummary } from '../types/telemetry';
 import { SessionManager } from '../services/sessionManager';
 import { ExportManager } from '../services/exportManager';
 import { telemetryBridge } from '../services/telemetryBridge';
+import { analyticsService } from '../services/analyticsService';
+import { syncService } from '../services/syncService';
+import { RecordingContextForm } from './RecordingContextForm';
+import { APP_DISPLAY_VERSION } from '../version';
 
 const sessionManager = new SessionManager(telemetryBridge);
 const exportManager = new ExportManager(telemetryBridge);
@@ -23,14 +27,23 @@ const exportManager = new ExportManager(telemetryBridge);
 export const SessionsScreen: React.FC = () => {
   const [sessions, setSessions] = useState<RecordingSessionSummary[]>([]);
   const [loading, setLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<string | null>(null);
+  const [pendingRecordingId, setPendingRecordingId] = useState<string | null>(null);
 
   const loadSessions = async () => {
     setLoading(true);
     try {
       const list = await sessionManager.list();
-      setSessions(list);
+      const sorted = [...list].sort((a, b) => {
+        const timeA = a.startedAt ? new Date(a.startedAt).getTime() : 0;
+        const timeB = b.startedAt ? new Date(b.startedAt).getTime() : 0;
+        return timeB - timeA;
+      });
+      setSessions(sorted);
     } catch (err: any) {
       Alert.alert(t('common.error'), err.message);
+      analyticsService.recordError(err, 'SessionsScreen:loadSessions');
     } finally {
       setLoading(false);
     }
@@ -52,9 +65,11 @@ export const SessionsScreen: React.FC = () => {
           url: fileUrl
         });
       }
+      await analyticsService.logSessionExported(sessionId);
     } catch (err: any) {
       if (err.message && !err.message.includes('dismissed')) {
         Alert.alert(t('common.error'), err.message);
+        analyticsService.recordError(err, 'SessionsScreen:handleExport');
       }
     }
   };
@@ -69,22 +84,66 @@ export const SessionsScreen: React.FC = () => {
           text: t('sessions.delete'),
           style: 'destructive',
           onPress: async () => {
-            await sessionManager.delete(sessionId);
-            loadSessions();
+            try {
+              await sessionManager.delete(sessionId);
+              loadSessions();
+            } catch (err: any) {
+              analyticsService.recordError(err, 'SessionsScreen:handleDelete');
+            }
           }
         }
       ]
     );
   };
 
+  const handleSync = async () => {
+    if (syncing || sessions.length === 0) return;
+    setSyncing(true);
+    setSyncStatus(t('sessions.syncing'));
+    try {
+      const report = await syncService.syncSessions(sessions);
+      const pending = sessions.filter(s => s.contextCompleteness !== 'complete').length;
+      if (report.errors.length > 0) {
+        setSyncStatus(t('sessions.syncError', { error: report.errors[0].error }));
+      } else if (report.syncedCount > 0) {
+        setSyncStatus(t('sessions.syncSuccess', { count: report.syncedCount }));
+      } else {
+        setSyncStatus(t('sessions.syncUpToDate'));
+      }
+      if (pending) setSyncStatus(previous => `${previous || ''}\n${t('context.syncPending', {count: pending})}`);
+    } catch (err: any) {
+      setSyncStatus(t('sessions.syncError', { error: err.message || 'Error' }));
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   return (
     <View style={styles.container}>
+      {pendingRecordingId && <RecordingContextForm recordingId={pendingRecordingId} onClose={() => { setPendingRecordingId(null); loadSessions(); }} />}
       <View style={styles.headerRow}>
         <Text style={styles.title}>{t('sessions.title')}</Text>
-        <TouchableOpacity style={styles.refreshButton} onPress={loadSessions}>
-          <Text style={styles.refreshButtonText}>↻ Atualizar</Text>
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            style={[styles.syncButton, syncing && styles.buttonDisabled]}
+            onPress={handleSync}
+            disabled={syncing}
+          >
+            <Text style={styles.syncButtonText}>
+              {syncing ? '⏳ ' + t('sessions.syncing') : '☁️ ' + t('sessions.sync')}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.refreshButton} onPress={loadSessions}>
+            <Text style={styles.refreshButtonText}>↻ {t('sessions.refresh')}</Text>
+          </TouchableOpacity>
+        </View>
       </View>
+
+      {syncStatus ? (
+        <View style={styles.syncStatusBar}>
+          <Text style={styles.syncStatusText}>{syncStatus}</Text>
+        </View>
+      ) : null}
 
       {sessions.length === 0 ? (
         <View style={styles.emptyContainer}>
@@ -111,6 +170,7 @@ export const SessionsScreen: React.FC = () => {
               <Text style={styles.dateText}>
                 {new Date(item.startedAt).toLocaleString()}
               </Text>
+              <Text style={styles.statsText}>{item.contextCompleteness === 'complete' ? t('context.complete') : t('context.pending')}</Text>
 
               <Text style={styles.statsText}>
                 {t('recording.sampleCount', { count: item.sampleCount })} • {Math.round(item.durationSeconds)}s
@@ -123,9 +183,10 @@ export const SessionsScreen: React.FC = () => {
               <View style={styles.actionRow}>
                 <TouchableOpacity
                   style={styles.exportButton}
-                  onPress={() => handleExport(item.id)}
+                  onPress={() => item.contextCompleteness === 'complete' ? handleExport(item.id) : setPendingRecordingId(item.id)}
+                  disabled={item.status === 'recording'}
                 >
-                  <Text style={styles.exportButtonText}>{t('sessions.exportZip')}</Text>
+                  <Text style={styles.exportButtonText}>{item.contextCompleteness === 'complete' ? t('sessions.exportZip') : t('context.pending')}</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -139,6 +200,9 @@ export const SessionsScreen: React.FC = () => {
           )}
         />
       )}
+      <View style={styles.versionFooter}>
+        <Text style={styles.versionFooterText}>{APP_DISPLAY_VERSION}</Text>
+      </View>
     </View>
   );
 };
@@ -160,6 +224,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16
   },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8
+  },
+  syncButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    backgroundColor: '#0284C7',
+    borderRadius: 6
+  },
+  syncButtonText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '600'
+  },
+  buttonDisabled: {
+    opacity: 0.6
+  },
   refreshButton: {
     paddingHorizontal: 10,
     paddingVertical: 4,
@@ -170,8 +253,20 @@ const styles = StyleSheet.create({
   },
   refreshButtonText: {
     color: '#38BDF8',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600'
+  },
+  syncStatusBar: {
+    backgroundColor: '#1E293B',
+    padding: 8,
+    borderRadius: 6,
+    marginBottom: 12,
+    borderLeftWidth: 3,
+    borderLeftColor: '#38BDF8'
+  },
+  syncStatusText: {
+    color: '#94A3B8',
+    fontSize: 12
   },
   emptyContainer: {
     flex: 1,
@@ -253,5 +348,15 @@ const styles = StyleSheet.create({
     color: '#F87171',
     fontSize: 12,
     fontWeight: '600'
+  },
+  versionFooter: {
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  versionFooterText: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '500',
   }
 });

@@ -16,11 +16,11 @@ android {
 
     namespace "com.remusapprecorder"
     defaultConfig {
-        applicationId "com.remusapprecorder"
+        applicationId "com.espindola.remus.recorder"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode 3
+        versionName "2.0.1"
     }
     signingConfigs {
         debug {
@@ -40,6 +40,11 @@ android {
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
         }
     }
+    externalNativeBuild {
+        cmake {
+            path "src/main/jni/CMakeLists.txt"
+        }
+    }
 }
 
 dependencies {
@@ -51,3 +56,6 @@ dependencies {
         implementation jscFlavor
     }
 }
+
+apply plugin: "com.google.gms.google-services"
+apply plugin: "com.google.firebase.crashlytics"
