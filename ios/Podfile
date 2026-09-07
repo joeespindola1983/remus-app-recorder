@@ -14,7 +14,16 @@ if linkage != nil
   use_frameworks! :linkage => linkage.to_sym
 end
 
+$RNFirebaseDisableSPM = true
+
 target 'remusapprecorder' do
+  pod 'GoogleUtilities', :modular_headers => true
+  pod 'GoogleDataTransport', :modular_headers => true
+  pod 'nanopb', :modular_headers => true
+  pod 'FirebaseCoreInternal', :modular_headers => true
+  pod 'FirebaseCrashlytics', :modular_headers => true
+  pod 'FirebaseSessions', :modular_headers => true
+
   config = use_native_modules!
 
   use_react_native!(

@@ -24,6 +24,7 @@ extension RecordingSession: TelemetryArchiveSession {
 
     func includesInArchive(relativePath: String) -> Bool {
         relativePath == "manifest.json" ||
+        relativePath == "recording-context.json" ||
         relativePath == "telemetry.sqlite" ||
         relativePath.hasPrefix("watch/")
     }

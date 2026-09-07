@@ -1,0 +1,174 @@
+{
+  "dictionaryVersion": "1.7.0",
+  "rowingBoatClasses": {
+    "single_sculls": "1x",
+    "double_sculls": "2x",
+    "pair": "2-",
+    "coxed_pair": "2+",
+    "quadruple_sculls": "4x",
+    "coxed_quadruple_sculls": "4x+",
+    "four": "4-",
+    "coxed_four": "4+",
+    "eight": "8+"
+  },
+  "boatClassSystems": {
+    "ivf_v": {
+      "documentedClasses": [
+        "v1",
+        "v6",
+        "v12"
+      ],
+      "scope": "current_ivf_world_sprints"
+    },
+    "vaa_v": {
+      "documentedClasses": [
+        "v1",
+        "v2",
+        "v3",
+        "v4",
+        "v6",
+        "v12",
+        "v16"
+      ],
+      "scope": "source_attributed_v_notation"
+    },
+    "outrigger_oc": {
+      "documentedClasses": [
+        "oc1",
+        "oc2",
+        "oc3",
+        "oc4",
+        "oc6"
+      ],
+      "scope": "source_attributed_outrigger_canoe_notation"
+    },
+    "waka_ama_w": {
+      "documentedClasses": [
+        "w1",
+        "w2",
+        "w3",
+        "w6",
+        "w12"
+      ],
+      "scope": "waka_ama_new_zealand_notation"
+    },
+    "custom": {
+      "documentedClasses": [],
+      "scope": "preserved_source_defined_class"
+    }
+  },
+  "classes": [
+    {
+      "system": "ivf_v",
+      "code": "v1",
+      "paddlerCapacity": 1
+    },
+    {
+      "system": "ivf_v",
+      "code": "v6",
+      "paddlerCapacity": 6
+    },
+    {
+      "system": "ivf_v",
+      "code": "v12",
+      "paddlerCapacity": 12,
+      "hullConfiguration": "double_hull"
+    },
+    {
+      "system": "vaa_v",
+      "code": "v1",
+      "paddlerCapacity": 1
+    },
+    {
+      "system": "vaa_v",
+      "code": "v2",
+      "paddlerCapacity": 2
+    },
+    {
+      "system": "vaa_v",
+      "code": "v3",
+      "paddlerCapacity": 3
+    },
+    {
+      "system": "vaa_v",
+      "code": "v4",
+      "paddlerCapacity": 4
+    },
+    {
+      "system": "vaa_v",
+      "code": "v6",
+      "paddlerCapacity": 6
+    },
+    {
+      "system": "vaa_v",
+      "code": "v12",
+      "paddlerCapacity": 12,
+      "hullConfiguration": "double_hull"
+    },
+    {
+      "system": "vaa_v",
+      "code": "v16",
+      "paddlerCapacity": 16
+    },
+    {
+      "system": "outrigger_oc",
+      "code": "oc1",
+      "paddlerCapacity": 1
+    },
+    {
+      "system": "outrigger_oc",
+      "code": "oc2",
+      "paddlerCapacity": 2
+    },
+    {
+      "system": "outrigger_oc",
+      "code": "oc3",
+      "paddlerCapacity": 3
+    },
+    {
+      "system": "outrigger_oc",
+      "code": "oc4",
+      "paddlerCapacity": 4
+    },
+    {
+      "system": "outrigger_oc",
+      "code": "oc6",
+      "paddlerCapacity": 6
+    },
+    {
+      "system": "waka_ama_w",
+      "code": "w1",
+      "paddlerCapacity": 1
+    },
+    {
+      "system": "waka_ama_w",
+      "code": "w2",
+      "paddlerCapacity": 2
+    },
+    {
+      "system": "waka_ama_w",
+      "code": "w3",
+      "paddlerCapacity": 3
+    },
+    {
+      "system": "waka_ama_w",
+      "code": "w6",
+      "paddlerCapacity": 6
+    },
+    {
+      "system": "waka_ama_w",
+      "code": "w12",
+      "paddlerCapacity": 12,
+      "hullConfiguration": "double_hull"
+    }
+  ],
+  "placements": [
+    "hull",
+    "left_wrist",
+    "right_wrist",
+    "body",
+    "oar",
+    "paddle",
+    "unknown"
+  ]
+}

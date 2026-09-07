@@ -8,6 +8,7 @@ describe('ExportManager Service', () => {
   beforeEach(() => {
     mockBridge = {
       startRecording: jest.fn(),
+      getRecordingState: jest.fn(),
       stopRecording: jest.fn(),
       listSessions: jest.fn(),
       deleteSession: jest.fn(),

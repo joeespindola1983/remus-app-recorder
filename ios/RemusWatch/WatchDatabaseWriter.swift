@@ -108,6 +108,12 @@ final class WatchDatabaseWriter {
         enqueue { [weak self] in try self?.insertDevice(batteryLevel: batteryLevel, batteryState: batteryState, wallTime: wallTime, elapsed: elapsed) }
     }
 
+    func updateReferenceFrame(_ name: String) {
+        queue.sync { [weak self] in
+            self?.manifest?.motionReferenceFrame = name
+        }
+    }
+
     func stop(at date: Date, failureMessage: String? = nil) -> WatchRecordingSession? {
         queue.sync {
             guard database != nil, let folderURL else { return nil }

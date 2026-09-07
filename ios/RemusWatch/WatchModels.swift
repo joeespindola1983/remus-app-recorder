@@ -43,7 +43,7 @@ struct WatchManifest: Codable {
     let wristLocation: String
     let crownOrientation: String
     let motionFrequencyHertz: Double
-    let motionReferenceFrame: String
+    var motionReferenceFrame: String
     var motionSampleCount: Int
     var locationSampleCount: Int
     var altimeterSampleCount: Int

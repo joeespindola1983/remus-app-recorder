@@ -8,6 +8,7 @@ describe('SessionManager Service', () => {
   beforeEach(() => {
     mockBridge = {
       startRecording: jest.fn().mockResolvedValue({ folderUri: '/mock/path/session-1', sessionId: 'mock-session-id' }),
+      getRecordingState: jest.fn().mockResolvedValue({ isRecording: false }),
       stopRecording: jest.fn().mockResolvedValue({
         id: 'mock-session-id',
         startedAt: '2026-09-05T14:00:00Z',
@@ -77,5 +78,13 @@ describe('SessionManager Service', () => {
     expect(manifest.status).toBe('completed');
     expect(manifest.motionSampleCount).toBe(60000);
     expect(manager.isRecording()).toBe(false);
+  });
+
+  test('restores native recording state after the screen is recreated', async () => {
+    mockBridge.getRecordingState.mockResolvedValue({ isRecording: true, sessionId: 'active-session' });
+
+    await expect(manager.restore()).resolves.toBe(true);
+    expect(manager.isRecording()).toBe(true);
+    expect(manager.getCurrentSessionId()).toBe('active-session');
   });
 });

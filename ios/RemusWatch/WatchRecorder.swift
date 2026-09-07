@@ -278,7 +278,7 @@ final class WatchRecorder: NSObject, ObservableObject {
         motionManager.startDeviceMotionUpdates(using: frame, to: motionQueue) { [weak self] motion, error in
             guard let self else { return }
             guard let motion else {
-                if let error { Task { @MainActor in self.fail(error.localizedDescription) } }
+                if let error { Task { @MainActor in self.handleMotionError(error) } }
                 return
             }
             let elapsed = max(0, motion.timestamp - sessionStartUptime)
@@ -305,6 +305,36 @@ final class WatchRecorder: NSObject, ObservableObject {
         scheduleMotionWatchdog(for: motionStartAttempt)
     }
 
+    private func handleMotionError(_ error: Error) {
+        guard isRecording else { return }
+        if elapsedSamples == 0 {
+            if frame == .xTrueNorthZVertical {
+                status = "Falling back to magnetic north"
+                frame = .xMagneticNorthZVertical
+                restartMotion()
+                return
+            } else if frame == .xMagneticNorthZVertical {
+                status = "Falling back to corrected motion"
+                frame = .xArbitraryCorrectedZVertical
+                restartMotion()
+                return
+            } else if frame == .xArbitraryCorrectedZVertical {
+                status = "Falling back to arbitrary reference"
+                frame = .xArbitraryZVertical
+                restartMotion()
+                return
+            }
+        }
+        fail(error.localizedDescription)
+    }
+
+    private func restartMotion() {
+        motionWatchdog?.cancel()
+        motionManager.stopDeviceMotionUpdates()
+        writer.updateReferenceFrame(referenceFrameName(frame))
+        startMotion()
+    }
+
     private func scheduleMotionWatchdog(for attempt: Int) {
         motionWatchdog?.cancel()
         motionWatchdog = Task { @MainActor [weak self] in
@@ -322,6 +352,7 @@ final class WatchRecorder: NSObject, ObservableObject {
                 self.motionManager.stopGyroUpdates()
                 self.motionManager.stopMagnetometerUpdates()
                 self.frame = .xArbitraryZVertical
+                self.writer.updateReferenceFrame(self.referenceFrameName(self.frame))
                 self.startMotion()
             } else {
                 self.fail("Motion sensors did not deliver samples after permission was granted. Please reopen the app and try again.")
@@ -551,15 +582,16 @@ final class WatchRecorder: NSObject, ObservableObject {
 
     private func preferredReferenceFrame() -> CMAttitudeReferenceFrame {
         let available = CMMotionManager.availableAttitudeReferenceFrames()
-        if available.contains(.xTrueNorthZVertical) { return .xTrueNorthZVertical }
         if available.contains(.xMagneticNorthZVertical) { return .xMagneticNorthZVertical }
-        return .xArbitraryCorrectedZVertical
+        if available.contains(.xArbitraryCorrectedZVertical) { return .xArbitraryCorrectedZVertical }
+        return .xArbitraryZVertical
     }
 
     private func referenceFrameName(_ value: CMAttitudeReferenceFrame) -> String {
         if value == .xTrueNorthZVertical { return "xTrueNorthZVertical" }
         if value == .xMagneticNorthZVertical { return "xMagneticNorthZVertical" }
-        return "xArbitraryCorrectedZVertical"
+        if value == .xArbitraryCorrectedZVertical { return "xArbitraryCorrectedZVertical" }
+        return "xArbitraryZVertical"
     }
 
     private func elapsed(atUptime uptime: TimeInterval) -> TimeInterval? {

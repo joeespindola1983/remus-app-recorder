@@ -6,6 +6,9 @@
     <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS" />
     <uses-permission android:name="android.permission.BODY_SENSORS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
       android:name=".MainApplication"
@@ -36,5 +39,9 @@
               android:name="android.support.FILE_PROVIDER_PATHS"
               android:resource="@xml/file_paths" />
       </provider>
+      <service
+          android:name="com.remus.telemetry.TelemetryRecordingService"
+          android:foregroundServiceType="location"
+          android:exported="false" />
     </application>
 </manifest>

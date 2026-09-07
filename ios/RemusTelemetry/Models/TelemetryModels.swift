@@ -99,6 +99,39 @@ struct SessionMetadata: Codable, Equatable {
     let systemVersion: String
     let motionFrequencyHertz: Double
     let notes: String
+    let placement: String
+    let schemaVersion: String
+    let producer: String
+    let producerPlatform: String
+    let orientationUnits: String
+
+    init(
+        sessionID: UUID = UUID(),
+        startedAt: Date = Date(),
+        appVersion: String,
+        deviceModel: String,
+        systemVersion: String,
+        motionFrequencyHertz: Double = 100.0,
+        notes: String = "",
+        placement: String = "unknown",
+        schemaVersion: String = "1.0.0",
+        producer: String = "remus-app-recorder",
+        producerPlatform: String = "ios",
+        orientationUnits: String = "radians"
+    ) {
+        self.sessionID = sessionID
+        self.startedAt = startedAt
+        self.appVersion = appVersion
+        self.deviceModel = deviceModel
+        self.systemVersion = systemVersion
+        self.motionFrequencyHertz = motionFrequencyHertz
+        self.notes = notes
+        self.placement = placement
+        self.schemaVersion = schemaVersion
+        self.producer = producer
+        self.producerPlatform = producerPlatform
+        self.orientationUnits = orientationUnits
+    }
 }
 
 struct RecordingManifest: Codable, Equatable, Identifiable {
@@ -116,6 +149,11 @@ struct RecordingManifest: Codable, Equatable, Identifiable {
     let systemVersion: String
     let notes: String
     let motionFrequencyHertz: Double
+    let placement: String
+    let schemaVersion: String
+    let producer: String
+    let producerPlatform: String
+    let orientationUnits: String
     var motionSampleCount: Int
     var locationSampleCount: Int
     var headingSampleCount: Int
@@ -124,6 +162,84 @@ struct RecordingManifest: Codable, Equatable, Identifiable {
     var status: Status
     var failureMessage: String?
     let databaseFilename: String
+
+    enum CodingKeys: String, CodingKey {
+        case id, startedAt, endedAt, appVersion, deviceModel, systemVersion, notes
+        case motionFrequencyHertz, placement, schemaVersion, producer, producerPlatform, orientationUnits
+        case motionSampleCount, locationSampleCount, headingSampleCount, altimeterSampleCount, weatherSampleCount
+        case status, failureMessage, databaseFilename
+    }
+
+    init(
+        id: UUID,
+        startedAt: Date,
+        endedAt: Date? = nil,
+        appVersion: String,
+        deviceModel: String,
+        systemVersion: String,
+        notes: String,
+        motionFrequencyHertz: Double,
+        placement: String = "unknown",
+        schemaVersion: String = "1.0.0",
+        producer: String = "remus-app-recorder",
+        producerPlatform: String = "ios",
+        orientationUnits: String = "radians",
+        motionSampleCount: Int,
+        locationSampleCount: Int,
+        headingSampleCount: Int,
+        altimeterSampleCount: Int,
+        weatherSampleCount: Int,
+        status: Status,
+        failureMessage: String? = nil,
+        databaseFilename: String
+    ) {
+        self.id = id
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+        self.appVersion = appVersion
+        self.deviceModel = deviceModel
+        self.systemVersion = systemVersion
+        self.notes = notes
+        self.motionFrequencyHertz = motionFrequencyHertz
+        self.placement = placement
+        self.schemaVersion = schemaVersion
+        self.producer = producer
+        self.producerPlatform = producerPlatform
+        self.orientationUnits = orientationUnits
+        self.motionSampleCount = motionSampleCount
+        self.locationSampleCount = locationSampleCount
+        self.headingSampleCount = headingSampleCount
+        self.altimeterSampleCount = altimeterSampleCount
+        self.weatherSampleCount = weatherSampleCount
+        self.status = status
+        self.failureMessage = failureMessage
+        self.databaseFilename = databaseFilename
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        startedAt = try container.decode(Date.self, forKey: .startedAt)
+        endedAt = try container.decodeIfPresent(Date.self, forKey: .endedAt)
+        appVersion = try container.decode(String.self, forKey: .appVersion)
+        deviceModel = try container.decode(String.self, forKey: .deviceModel)
+        systemVersion = try container.decode(String.self, forKey: .systemVersion)
+        notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        motionFrequencyHertz = try container.decodeIfPresent(Double.self, forKey: .motionFrequencyHertz) ?? 100.0
+        placement = try container.decodeIfPresent(String.self, forKey: .placement) ?? "unknown"
+        schemaVersion = try container.decodeIfPresent(String.self, forKey: .schemaVersion) ?? "1.0.0"
+        producer = try container.decodeIfPresent(String.self, forKey: .producer) ?? "remus-app-recorder"
+        producerPlatform = try container.decodeIfPresent(String.self, forKey: .producerPlatform) ?? "ios"
+        orientationUnits = try container.decodeIfPresent(String.self, forKey: .orientationUnits) ?? "radians"
+        motionSampleCount = try container.decodeIfPresent(Int.self, forKey: .motionSampleCount) ?? 0
+        locationSampleCount = try container.decodeIfPresent(Int.self, forKey: .locationSampleCount) ?? 0
+        headingSampleCount = try container.decodeIfPresent(Int.self, forKey: .headingSampleCount) ?? 0
+        altimeterSampleCount = try container.decodeIfPresent(Int.self, forKey: .altimeterSampleCount) ?? 0
+        weatherSampleCount = try container.decodeIfPresent(Int.self, forKey: .weatherSampleCount) ?? 0
+        status = try container.decodeIfPresent(Status.self, forKey: .status) ?? .completed
+        failureMessage = try container.decodeIfPresent(String.self, forKey: .failureMessage)
+        databaseFilename = try container.decodeIfPresent(String.self, forKey: .databaseFilename) ?? "telemetry.sqlite"
+    }
 }
 
 struct RecordingSession: Identifiable, Equatable {
