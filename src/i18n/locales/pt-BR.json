@@ -75,5 +75,10 @@
   "recorder.status.ready": "Pronto",
   "recorder.status.acquiringGps": "Buscando GPS",
   "recording.screenOffTip": "Dica: Você pode bloquear a tela para economizar bateria. O treino continuará gravando normalmente em segundo plano.",
-  "recorder.permissions.locationRequired": "A permissão de localização é necessária para gravar a velocidade e o percurso."
+  "recorder.permissions.locationRequired": "A permissão de localização é necessária para gravar a velocidade e o percurso.",
+  "recorder.spm.title": "Voga experimental",
+  "recorder.spm.ready": "Inicie uma gravação para estimar a voga deste celular.",
+  "recorder.spm.collecting": "Analisando o movimento · cerca de {{seconds}} s",
+  "recorder.spm.liveDetail": "Estimativa do celular · atualiza a cada segundo",
+  "recorder.spm.unavailable": "Sem periodicidade confiável neste momento"
 }

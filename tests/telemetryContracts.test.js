@@ -307,6 +307,14 @@ test('validates that iOS telemetry bridge sends gpsAccuracyMeters and adapter no
   assert.deepStrictEqual(normalizeTelemetryEvent({}), {});
   assert.deepStrictEqual(normalizeTelemetryEvent({ gpsAccuracyMeters: 4.5 }), { horizontalAccuracyMeters: 4.5 });
   assert.deepStrictEqual(normalizeTelemetryEvent({ gpsAccuracyMeters: null }), { horizontalAccuracyMeters: null });
+  assert.deepStrictEqual(
+    normalizeTelemetryEvent({ strokeRateSpm: 22.4, strokeRateStatus: 'available' }),
+    { strokeRateSpm: 22.4, strokeRateStatus: 'available' }
+  );
+  assert.deepStrictEqual(
+    normalizeTelemetryEvent({ strokeRateSpm: null, strokeRateStatus: 'unavailable' }),
+    { strokeRateSpm: null, strokeRateStatus: 'unavailable' }
+  );
 
   // Test that iOS RemusTelemetryModule.swift contains "gpsAccuracyMeters" in the onTelemetryUpdate payload
   const swiftBridge = fs.readFileSync(path.resolve(__dirname, '../ios/RemusTelemetry/RemusTelemetryModule.swift'), 'utf8');
@@ -391,4 +399,3 @@ test('requestPermissions delegates to iOS RemusTelemetryModule and Android Permi
   assert.strictEqual(androidCalled, true);
   assert.strictEqual(androidResult, true);
 });
-

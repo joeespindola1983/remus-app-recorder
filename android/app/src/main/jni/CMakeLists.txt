@@ -17,3 +17,9 @@ project(appmodules)
 
 # This file includes all the necessary to let you build your application with the New Architecture.
 include(${REACT_ANDROID_DIR}/cmake-utils/ReactNative-application.cmake)
+
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+  LiveSpmJni.cpp
+  ../../../../../native/live_spm/LiveSpmEstimator.cpp
+)
+target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ../../../../../native/live_spm)

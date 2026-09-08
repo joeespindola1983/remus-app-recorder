@@ -40,6 +40,7 @@ final class SensorRecorder: NSObject, ObservableObject {
     @Published private(set) var shouldOfferSettings = false
     @Published private(set) var locationAccuracyStatus = "Unknown accuracy"
     @Published private(set) var measuredGPSHertz = 0.0
+    @Published private(set) var liveStrokeRate: [String: Any]?
     @Published private(set) var watchWorkoutStatus = "Watch workout not requested"
 
     private let locationManager = CLLocationManager()
@@ -49,6 +50,7 @@ final class SensorRecorder: NSObject, ObservableObject {
     private let databaseWriter = SessionDatabaseWriter()
     private let weatherService = WeatherService()
     private let healthStore = HKHealthStore()
+    private let liveSpmEstimator = RemusLiveSpmBridge()
 
     private var latestLocation: CLLocation?
     private var latestHeading: CLHeading?
@@ -347,6 +349,8 @@ final class SensorRecorder: NSObject, ObservableObject {
         sensorStatus = "Preparing sensors"
         measuredMotionHertz = 0
         measuredGPSHertz = 0
+        liveStrokeRate = nil
+        liveSpmEstimator.reset()
         firstGPSTimestamp = nil
         capturedGPSCount = 0
         lastRecordedLocationSourceTime = nil
@@ -370,6 +374,14 @@ final class SensorRecorder: NSObject, ObservableObject {
                     self.rotationRate = update.rotationRate
                     self.rotationVector = update.rotationVector
                     self.measuredMotionHertz = update.measuredHertz
+                    if let estimate = self.liveSpmEstimator.pushTimestamp(
+                        update.sensorUptime,
+                        x: update.userAcceleration.x * 9.80665,
+                        y: update.userAcceleration.y * 9.80665,
+                        z: update.userAcceleration.z * 9.80665
+                    ) as? [String: Any] {
+                        self.liveStrokeRate = estimate
+                    }
                     self.sensorStatus = "IMU active · \(update.measuredHertz.formatted(.number.precision(.fractionLength(1)))) Hz measured"
 
                     if self.lastDeviceSampleUptime.map({ update.sensorUptime - $0 >= 60 }) ?? true {
@@ -675,6 +687,7 @@ private final class MotionCaptureService {
         let accelerationG: Double
         let rotationRate: Double
         let rotationVector: Vector3
+        let userAcceleration: Vector3
         let queuedWrites: Int
         let sensorUptime: TimeInterval
     }
@@ -746,13 +759,14 @@ private final class MotionCaptureService {
 
             sampleCount += 1
             if firstTimestamp == nil { firstTimestamp = motion.timestamp }
-            guard sampleCount.isMultiple(of: 10), let firstTimestamp, motion.timestamp > firstTimestamp else { return }
+            guard sampleCount.isMultiple(of: 4), let firstTimestamp, motion.timestamp > firstTimestamp else { return }
             onUpdate(Update(
                 sampleCount: sampleCount,
                 measuredHertz: Double(sampleCount - 1) / (motion.timestamp - firstTimestamp),
                 accelerationG: sample.userAccelerationG.magnitude,
                 rotationRate: sample.rotationRateRadiansPerSecond.magnitude,
                 rotationVector: sample.rotationRateRadiansPerSecond,
+                userAcceleration: sample.userAccelerationG,
                 queuedWrites: writer.queuedWriteCount,
                 sensorUptime: motion.timestamp
             ))

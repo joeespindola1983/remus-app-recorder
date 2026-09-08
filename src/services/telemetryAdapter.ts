@@ -8,7 +8,10 @@ export function normalizeTelemetryEvent(event: Record<string, any>): Record<stri
     gpsAccuracyMeters:'horizontalAccuracyMeters', heartRateBpm:'heartRateBeatsPerMinute',
     weatherTemperatureC:'airTemperatureCelsius', gpsRateHz:'samplingRateHertz', imuSamples:'imuSamples',
     altitudeMeters:'altitudeMeters', pressureKPa:'pressureKPa',
-    weatherHumidityPercent:'weatherHumidityPercent', accelerationG:'accelerationG'
+    weatherHumidityPercent:'weatherHumidityPercent', accelerationG:'accelerationG',
+    strokeRateSpm:'strokeRateSpm', strokeRatePeriodicity:'strokeRatePeriodicity',
+    strokeRateProgress:'strokeRateProgress', strokeRateWindowSeconds:'strokeRateWindowSeconds',
+    strokeRateObservedHertz:'strokeRateObservedHertz'
   };
   for (const [legacy, canonical] of Object.entries(fields)) if (Object.prototype.hasOwnProperty.call(event, legacy)) result[canonical] = finite(event[legacy]);
   for (const [legacy, canonical] of [['speedKmh','groundSpeedMetersPerSecond'],['weatherWindKmh','windSpeedMetersPerSecond']]) {
@@ -19,5 +22,8 @@ export function normalizeTelemetryEvent(event: Record<string, any>): Record<stri
     result.rotationRateRadiansPerSecond = x === null || y === null || z === null ? null : {x,y,z};
   }
   if (typeof event.weatherStatus === 'string') result.weatherStatus = event.weatherStatus;
+  for (const field of ['strokeRateStatus','strokeRateReason','strokeRateAlgorithmVersion','strokeRateOrigin']) {
+    if (typeof event[field] === 'string') result[field] = event[field];
+  }
   return result;
 }

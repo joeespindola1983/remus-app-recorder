@@ -42,6 +42,15 @@ interface MetricsState {
   airTemperatureCelsius: number | null;
   weatherHumidityPercent: number | null;
   windSpeedMetersPerSecond: number | null;
+  strokeRateSpm: number | null;
+  strokeRateStatus: 'collecting' | 'available' | 'unavailable' | null;
+  strokeRateReason: string | null;
+  strokeRatePeriodicity: number | null;
+  strokeRateProgress: number | null;
+  strokeRateWindowSeconds: number | null;
+  strokeRateObservedHertz: number | null;
+  strokeRateAlgorithmVersion: string | null;
+  strokeRateOrigin: string | null;
 }
 
 export const RecorderScreen: React.FC = () => {
@@ -69,7 +78,16 @@ export const RecorderScreen: React.FC = () => {
     weatherStatus: 'Waiting for location…',
     airTemperatureCelsius: null,
     weatherHumidityPercent: null,
-    windSpeedMetersPerSecond: null
+    windSpeedMetersPerSecond: null,
+    strokeRateSpm: null,
+    strokeRateStatus: null,
+    strokeRateReason: null,
+    strokeRatePeriodicity: null,
+    strokeRateProgress: null,
+    strokeRateWindowSeconds: null,
+    strokeRateObservedHertz: null,
+    strokeRateAlgorithmVersion: null,
+    strokeRateOrigin: null
   });
 
   useEffect(() => {
@@ -140,6 +158,7 @@ export const RecorderScreen: React.FC = () => {
       });
       setIsRecording(true);
       setDuration(0);
+      setMetrics(prev => ({...prev, strokeRateSpm: null, strokeRateStatus: 'collecting', strokeRateProgress: 0}));
       await analyticsService.logRecordingStarted({
         sessionId: res.sessionId,
         sensorProfile: placement,
@@ -189,6 +208,16 @@ export const RecorderScreen: React.FC = () => {
     return `X ${vector.x.toFixed(2)} · Y ${vector.y.toFixed(2)} · Z ${vector.z.toFixed(2)}`;
   };
 
+  const strokeRateDetail = () => {
+    if (!isRecording) return t('recorder.spm.ready');
+    if (metrics.strokeRateStatus === 'available' && metrics.strokeRateSpm !== null) {
+      return t('recorder.spm.liveDetail');
+    }
+    if (metrics.strokeRateStatus === 'unavailable') return t('recorder.spm.unavailable');
+    const remaining = Math.max(0, Math.ceil(15 * (1 - (metrics.strokeRateProgress ?? Math.min(duration / 15, 1)))));
+    return t('recorder.spm.collecting').replace('{{seconds}}', String(remaining));
+  };
+
   return (
     <SafeAreaView style={styles.safeArea}>
       {pendingRecordingId && <RecordingContextForm recordingId={pendingRecordingId} onClose={() => setPendingRecordingId(null)} />}
@@ -227,6 +256,19 @@ export const RecorderScreen: React.FC = () => {
               <Text style={styles.tipText}>{t('recording.screenOffTip')}</Text>
             </View>
           )}
+        </View>
+
+        <View style={styles.spmCard}>
+          <View>
+            <Text style={styles.spmTitle}>{t('recorder.spm.title')}</Text>
+            <Text style={styles.spmDetail}>{strokeRateDetail()}</Text>
+          </View>
+          <View style={styles.spmValueRow}>
+            <Text style={styles.spmValue}>
+              {metrics.strokeRateStatus === 'available' && metrics.strokeRateSpm !== null ? metrics.strokeRateSpm.toFixed(1) : '—'}
+            </Text>
+            <Text style={styles.spmUnit}>SPM</Text>
+          </View>
         </View>
 
         {/* Metrics Grid */}
@@ -326,6 +368,19 @@ const styles = StyleSheet.create({
     gap: 12,
     justifyContent: 'space-between'
   },
+  spmCard: {
+    backgroundColor: '#0C4A6E',
+    borderRadius: 16,
+    padding: 16,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center'
+  },
+  spmTitle: { color: '#E0F2FE', fontSize: 16, fontWeight: '700' },
+  spmDetail: { color: '#7DD3FC', fontSize: 11, marginTop: 4, maxWidth: 190 },
+  spmValueRow: { flexDirection: 'row', alignItems: 'baseline', gap: 5 },
+  spmValue: { color: '#FFFFFF', fontSize: 36, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  spmUnit: { color: '#BAE6FD', fontSize: 12, fontWeight: '600' },
   metricTile: {
     width: '48%',
     backgroundColor: '#1E293B',

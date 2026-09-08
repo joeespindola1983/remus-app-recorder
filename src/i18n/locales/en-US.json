@@ -75,5 +75,10 @@
   "recorder.status.ready": "Ready",
   "recorder.status.acquiringGps": "Acquiring GPS",
   "recording.screenOffTip": "Tip: You can lock your screen to save battery. Workout recording will continue normally in the background.",
-  "recorder.permissions.locationRequired": "Location permission is required to record speed and course."
+  "recorder.permissions.locationRequired": "Location permission is required to record speed and course.",
+  "recorder.spm.title": "Experimental stroke rate",
+  "recorder.spm.ready": "Start recording to estimate stroke rate from this phone.",
+  "recorder.spm.collecting": "Analyzing motion · about {{seconds}} s",
+  "recorder.spm.liveDetail": "Phone estimate · updates every second",
+  "recorder.spm.unavailable": "No reliable periodicity right now"
 }

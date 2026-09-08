@@ -130,6 +130,8 @@ class RemusTelemetryModule(private val reactContext: ReactApplicationContext) :
     private var totalDistanceMeters = 0.0
     private var currentSpeedKmh = 0.0
     private var lastEmitTimeMillis: Long = 0
+    private val liveSpmHandle = LiveSpmNative.create()
+    private var liveSpmResult: DoubleArray? = null
 
     override fun getName(): String = "RemusTelemetryModule"
 
@@ -185,6 +187,8 @@ class RemusTelemetryModule(private val reactContext: ReactApplicationContext) :
             lastRollRad = 0.0; lastPitchRad = 0.0; lastYawRad = 0.0
             lastQx = 0.0; lastQy = 0.0; lastQz = 0.0; lastQw = 1.0
             lastEmitTimeMillis = 0
+            LiveSpmNative.reset(liveSpmHandle)
+            liveSpmResult = null
             lastCourseDegrees = null
             lastHeadingDegrees = null
             recentGpsTimestampsNanos.clear()
@@ -380,6 +384,14 @@ class RemusTelemetryModule(private val reactContext: ReactApplicationContext) :
                 }
                 lastPersistedMotionTimestampNanos = sensorUptimeNanos(event)
 
+                LiveSpmNative.push(
+                    liveSpmHandle,
+                    sensorUptime,
+                    lastUserAx * 9.80665,
+                    lastUserAy * 9.80665,
+                    lastUserAz * 9.80665
+                )?.let { liveSpmResult = it }
+
                 w.recordMotion(
                     wallTime, elapsed, sensorUptime,
                     lastRawAx, lastRawAy, lastRawAz,
@@ -425,6 +437,17 @@ class RemusTelemetryModule(private val reactContext: ReactApplicationContext) :
                     // Linear user acceleration magnitude (g)
                     val userAccelG = Math.sqrt(lastUserAx * lastUserAx + lastUserAy * lastUserAy + lastUserAz * lastUserAz)
                     body.putDouble("accelerationG", userAccelG)
+                    liveSpmResult?.let { estimate ->
+                        if (estimate[0] > 0) body.putDouble("strokeRateSpm", estimate[1]) else body.putNull("strokeRateSpm")
+                        body.putString("strokeRateStatus", if (estimate[0] > 0) "available" else if (estimate[0] == 0.0) "collecting" else "unavailable")
+                        body.putString("strokeRateReason", if (estimate[0] == 0.0) "collecting_window" else if (estimate[0] < 0) "weak_periodicity" else "")
+                        body.putDouble("strokeRatePeriodicity", estimate[2])
+                        body.putDouble("strokeRateProgress", estimate[3])
+                        body.putDouble("strokeRateObservedHertz", estimate[4])
+                        body.putDouble("strokeRateWindowSeconds", 15.0)
+                        body.putString("strokeRateAlgorithmVersion", "live-vector-acf-0.1-experimental")
+                        body.putString("strokeRateOrigin", "phone_linear_acceleration")
+                    }
 
                     if (lastGyroscopeTimestampNanos != null) {
                         body.putDouble("rotationXRad", lastRotX)

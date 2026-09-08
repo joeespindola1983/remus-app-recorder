@@ -150,6 +150,13 @@ class RemusTelemetryModule: RCTEventEmitter {
                 }
                 .store(in: &self.cancellables)
 
+            recorder.$liveStrokeRate
+                .compactMap { $0 }
+                .sink { [weak self] estimate in
+                    self?.sendEvent(withName: "onTelemetryUpdate", body: estimate)
+                }
+                .store(in: &self.cancellables)
+
             recorder.$weatherStatus
                 .sink { [weak self] status in
                     self?.sendEvent(withName: "onTelemetryUpdate", body: ["weatherStatus": status])
