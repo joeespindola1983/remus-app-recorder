@@ -106,6 +106,6 @@
   "context.boat.coxed": "with coxswain",
   "context.boat.uncoxed": "without coxswain",
   "recorder.origin.reported": "GPS",
-  "recorder.origin.coordinateDerived": "Calc",
+  "recorder.origin.coordinateDerived": "Degraded",
   "recorder.origin.unavailable": "Unavailable"
 }

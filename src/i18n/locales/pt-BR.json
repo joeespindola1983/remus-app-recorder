@@ -106,6 +106,6 @@
   "context.boat.coxed": "com timoneiro",
   "context.boat.uncoxed": "sem timoneiro",
   "recorder.origin.reported": "GPS",
-  "recorder.origin.coordinateDerived": "Calc",
+  "recorder.origin.coordinateDerived": "Degradado",
   "recorder.origin.unavailable": "Indisponível"
 }
