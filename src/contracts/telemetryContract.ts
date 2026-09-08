@@ -35,6 +35,10 @@ export interface NormalizedTelemetry {
   strokeRateObservedHertz: number | null;
   strokeRateAlgorithmVersion: string | null;
   strokeRateOrigin: string | null;
+
+  // Quality & Origin
+  speedOrigin: 'reported' | 'coordinate_derived' | 'unavailable' | null;
+  courseOrigin: 'reported' | 'coordinate_derived' | 'unavailable' | null;
 }
 
 const finite = (v: unknown): number | null => typeof v === 'number' && Number.isFinite(v) ? v : null;
@@ -114,7 +118,7 @@ export function normalizeTelemetryEvent(
     result.weatherStatus = raw.weatherStatus === null ? null : String(raw.weatherStatus);
   }
 
-  for (const field of ['strokeRateStatus', 'strokeRateReason', 'strokeRateAlgorithmVersion', 'strokeRateOrigin']) {
+  for (const field of ['strokeRateStatus', 'strokeRateReason', 'strokeRateAlgorithmVersion', 'strokeRateOrigin', 'speedOrigin', 'courseOrigin']) {
     if (Object.prototype.hasOwnProperty.call(raw, field)) {
       (result as any)[field] = raw[field] === null ? null : String(raw[field]);
     }

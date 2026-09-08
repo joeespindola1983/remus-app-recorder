@@ -18,6 +18,7 @@
 		A10000000000000000000002 /* LiveSpmEstimator.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000012 /* LiveSpmEstimator.cpp */; };
 		3ABA8787CD607B877B47ED0B /* WeatherService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 947FDC45D9F1C8E5EF4D68A0 /* WeatherService.swift */; };
 		4313A9EA40820E3D85B47977 /* SensorMath.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B20A040D467FE991A761C9C /* SensorMath.swift */; };
+		A10000000000000000000021 /* LocationQualityPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000022 /* LocationQualityPolicy.swift */; };
 		48827499C5817DE78C1E71E0 /* WatchRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B2919AFFDB5393C5B0ABF1C /* WatchRecorder.swift */; };
 		4949FFC58237392986199AC5 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
 		4A080DCAEA612E08D6515F23 /* ZipArchiveService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AAE3385B7350D1645CB30B6 /* ZipArchiveService.swift */; };
@@ -67,6 +68,7 @@
 		CC1000000000000000000002 /* RecordingContextStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingContextStore.swift; sourceTree = "<group>"; };
 		0740B364B8DD9DB56C0C473D /* RemusWatchApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RemusWatchApp.swift; sourceTree = "<group>"; };
 		0B20A040D467FE991A761C9C /* SensorMath.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SensorMath.swift; sourceTree = "<group>"; };
+		A10000000000000000000022 /* LocationQualityPolicy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LocationQualityPolicy.swift; sourceTree = "<group>"; };
 		0C92CD2C28344FE31A2E5A0B /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/WatchOS.platform/Developer/SDKs/WatchOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		13B07F961A680F5B00A75B9A /* remusapprecorder.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = remusapprecorder.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = remusapprecorder/Images.xcassets; sourceTree = "<group>"; };
@@ -203,6 +205,7 @@
 			isa = PBXGroup;
 			children = (
 				0B20A040D467FE991A761C9C /* SensorMath.swift */,
+				A10000000000000000000022 /* LocationQualityPolicy.swift */,
 				A10000000000000000000010 /* RemusLiveSpmBridge.h */,
 				A10000000000000000000011 /* RemusLiveSpmBridge.mm */,
 				A10000000000000000000012 /* LiveSpmEstimator.cpp */,
@@ -482,6 +485,7 @@
 			files = (
 				761780ED2CA45674006654EE /* AppDelegate.swift in Sources */,
 				4313A9EA40820E3D85B47977 /* SensorMath.swift in Sources */,
+				A10000000000000000000021 /* LocationQualityPolicy.swift in Sources */,
 				8D23C2592659272625CE688D /* TelemetryModels.swift in Sources */,
 				CC1000000000000000000001 /* RecordingContextStore.swift in Sources */,
 				15E6E9BBAA53C7E02D721FBB /* RemusTelemetryModule.m in Sources */,
@@ -529,7 +533,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = remusapprecorder/remusapprecorder.entitlements;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 6;
 				DEVELOPMENT_TEAM = V6JPGVRWCS;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = remusapprecorder/Info.plist;
@@ -538,7 +542,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.2.0;
+				MARKETING_VERSION = 2.2.1;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -562,7 +566,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = remusapprecorder/remusapprecorder.entitlements;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 6;
 				DEVELOPMENT_TEAM = V6JPGVRWCS;
 				INFOPLIST_FILE = remusapprecorder/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
@@ -570,7 +574,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.2.0;
+				MARKETING_VERSION = 2.2.1;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",

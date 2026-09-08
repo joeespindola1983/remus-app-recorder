@@ -100,7 +100,9 @@ class RemusTelemetryModule: RCTEventEmitter {
                 .sink { [weak self] speed in
                     guard let self = self, let rec = self.recorder else { return }
                     self.sendEvent(withName: "onTelemetryUpdate", body: [
-                        "speedKmh": speed,
+                        "speedKmh": speed.map { $0 as Any } ?? NSNull(),
+                        "speedOrigin": rec.speedOrigin.rawValue,
+                        "courseOrigin": rec.courseOrigin.rawValue,
                         "distanceMeters": rec.distanceMeters,
                         "courseDegrees": rec.courseDegrees.map { $0 as Any } ?? NSNull(),
                         "headingDegrees": rec.headingDegrees.map { $0 as Any } ?? NSNull(),
@@ -116,7 +118,9 @@ class RemusTelemetryModule: RCTEventEmitter {
                 .sink { [weak self] accuracy in
                     guard let self = self, let rec = self.recorder else { return }
                     self.sendEvent(withName: "onTelemetryUpdate", body: [
-                        "speedKmh": rec.currentSpeedKilometersPerHour,
+                        "speedKmh": rec.currentSpeedKilometersPerHour.map { $0 as Any } ?? NSNull(),
+                        "speedOrigin": rec.speedOrigin.rawValue,
+                        "courseOrigin": rec.courseOrigin.rawValue,
                         "distanceMeters": rec.distanceMeters,
                         "courseDegrees": rec.courseDegrees.map { $0 as Any } ?? NSNull(),
                         "headingDegrees": rec.headingDegrees.map { $0 as Any } ?? NSNull(),

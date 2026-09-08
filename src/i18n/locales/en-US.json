@@ -104,5 +104,8 @@
   "context.boat.capacitySingle": "1 athlete",
   "context.boat.capacityMultiple": "{{count}} athletes",
   "context.boat.coxed": "with coxswain",
-  "context.boat.uncoxed": "without coxswain"
+  "context.boat.uncoxed": "without coxswain",
+  "recorder.origin.reported": "GPS",
+  "recorder.origin.coordinateDerived": "Calc",
+  "recorder.origin.unavailable": "Unavailable"
 }

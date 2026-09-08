@@ -19,9 +19,11 @@ final class SensorRecorder: NSObject, ObservableObject {
     @Published private(set) var state: State = .idle
     @Published private(set) var startedAt: Date?
     @Published private(set) var sampleCount = 0
-    @Published private(set) var currentSpeedKilometersPerHour = 0.0
+    @Published private(set) var currentSpeedKilometersPerHour: Double? = nil
+    @Published private(set) var speedOrigin: QualityOrigin = .unavailable
     @Published private(set) var distanceMeters = 0.0
     @Published private(set) var courseDegrees: Double?
+    @Published private(set) var courseOrigin: QualityOrigin = .unavailable
     @Published private(set) var headingDegrees: Double?
     @Published private(set) var coordinate: CLLocationCoordinate2D?
     @Published private(set) var horizontalAccuracyMeters: Double?
@@ -51,6 +53,7 @@ final class SensorRecorder: NSObject, ObservableObject {
     private let weatherService = WeatherService()
     private let healthStore = HKHealthStore()
     private let liveSpmEstimator = RemusLiveSpmBridge()
+    private let locationEvaluator = LocationQualityEvaluator()
 
     private var latestLocation: CLLocation?
     private var latestHeading: CLHeading?
@@ -326,9 +329,12 @@ final class SensorRecorder: NSObject, ObservableObject {
 
     private func resetLiveValues() {
         sampleCount = 0
-        currentSpeedKilometersPerHour = 0
+        currentSpeedKilometersPerHour = nil
+        speedOrigin = .unavailable
         distanceMeters = 0
         courseDegrees = nil
+        courseOrigin = .unavailable
+        locationEvaluator.reset()
         headingDegrees = nil
         coordinate = nil
         horizontalAccuracyMeters = nil
@@ -524,8 +530,11 @@ final class SensorRecorder: NSObject, ObservableObject {
         coordinate = location.coordinate
         horizontalAccuracyMeters = location.horizontalAccuracy
         if isFresh {
-            currentSpeedKilometersPerHour = location.speed >= 0 ? SensorMath.kilometersPerHour(metersPerSecond: location.speed) : 0
-            courseDegrees = location.course >= 0 ? location.course : nil
+            let motion = locationEvaluator.update(location: location)
+            currentSpeedKilometersPerHour = motion.speedKilometersPerHour
+            speedOrigin = motion.speedOrigin
+            courseDegrees = motion.courseDegrees
+            courseOrigin = motion.courseOrigin
         }
 
         let sample = Self.locationSample(location)

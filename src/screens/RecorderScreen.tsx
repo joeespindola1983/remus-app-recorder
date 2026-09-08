@@ -28,8 +28,10 @@ const telemetryEmitter = RemusTelemetryModule ? new NativeEventEmitter(RemusTele
 // Canonical product view; raw producer schemas are adapted at the event boundary.
 interface MetricsState {
   groundSpeedMetersPerSecond: number | null;
+  speedOrigin: 'reported' | 'coordinate_derived' | 'unavailable' | null;
   distanceMeters: number | null;
   courseDegrees: number | null;
+  courseOrigin: 'reported' | 'coordinate_derived' | 'unavailable' | null;
   headingDegrees: number | null;
   accelerationG: number | null;
   rotationRateRadiansPerSecond: {x: number; y: number; z: number} | null;
@@ -56,8 +58,10 @@ interface MetricsState {
 
 const INITIAL_METRICS: MetricsState = {
   groundSpeedMetersPerSecond: null,
+  speedOrigin: null,
   distanceMeters: null,
   courseDegrees: null,
+  courseOrigin: null,
   headingDegrees: null,
   accelerationG: null,
   rotationRateRadiansPerSecond: null,
@@ -202,9 +206,22 @@ export const RecorderScreen: React.FC = () => {
     }
   };
 
-  const renderMetricTile = (title: string, value: string, unit: string) => (
+  const originBadge = (origin: 'reported' | 'coordinate_derived' | 'unavailable' | null) => {
+    if (!origin || origin === 'unavailable') return null;
+    if (origin === 'coordinate_derived') return t('recorder.origin.coordinateDerived');
+    return t('recorder.origin.reported');
+  };
+
+  const renderMetricTile = (title: string, value: string, unit: string, badge?: string | null) => (
     <View style={styles.metricTile}>
-      <Text style={styles.metricTitle}>{title}</Text>
+      <View style={styles.metricTitleRow}>
+        <Text style={styles.metricTitle}>{title}</Text>
+        {badge ? (
+          <View style={styles.originBadge}>
+            <Text style={styles.originBadgeText}>{badge}</Text>
+          </View>
+        ) : null}
+      </View>
       <Text style={styles.metricValue} numberOfLines={1} adjustsFontSizeToFit>{value}</Text>
       <Text style={styles.metricUnit}>{unit}</Text>
     </View>
@@ -291,9 +308,9 @@ export const RecorderScreen: React.FC = () => {
 
         {/* Metrics Grid */}
         <View style={styles.metricsGrid}>
-          {renderMetricTile('Speed', metrics.groundSpeedMetersPerSecond === null ? '—' : (metrics.groundSpeedMetersPerSecond * 3.6).toFixed(1), 'km/h')}
+          {renderMetricTile('Speed', metrics.groundSpeedMetersPerSecond === null ? '—' : (metrics.groundSpeedMetersPerSecond * 3.6).toFixed(1), 'km/h', originBadge(metrics.speedOrigin))}
           {renderMetricTile('Distance', metrics.distanceMeters?.toFixed(0) ?? '—', 'm')}
-          {renderMetricTile('Course', metrics.courseDegrees === null ? '—' : `${metrics.courseDegrees.toFixed(0)}°`, 'movement')}
+          {renderMetricTile('Course', metrics.courseDegrees === null ? '—' : `${metrics.courseDegrees.toFixed(0)}°`, 'movement', originBadge(metrics.courseOrigin))}
           {renderMetricTile('Heading', metrics.headingDegrees === null ? '—' : `${metrics.headingDegrees.toFixed(0)}°`, 'phone')}
           {renderMetricTile('Acceleration', metrics.accelerationG?.toFixed(3) ?? '—', 'g')}
           {renderMetricTile('Rotation (X/Y/Z)', rotationValue(), 'rad/s')}
@@ -407,9 +424,26 @@ const styles = StyleSheet.create({
     minHeight: 110,
     justifyContent: 'space-between'
   },
+  metricTitleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    width: '100%',
+  },
   metricTitle: {
     color: '#94A3B8',
     fontSize: 12
+  },
+  originBadge: {
+    backgroundColor: '#334155',
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  originBadgeText: {
+    color: '#38BDF8',
+    fontSize: 9,
+    fontWeight: '700',
   },
   metricValue: {
     color: '#F8FAFC',

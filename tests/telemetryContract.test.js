@@ -115,3 +115,28 @@ test('telemetryContract: stroke rate strings and numeric properties normalize co
   assert.equal(result.strokeRateAlgorithmVersion, '1.0');
   assert.equal(result.strokeRateOrigin, 'phone_accel');
 });
+
+test('telemetryContract: speedOrigin and courseOrigin normalize correctly', () => {
+  const result = normalizeTelemetryEvent({
+    speedKmh: 10.8,
+    speedOrigin: 'coordinate_derived',
+    courseDegrees: 90,
+    courseOrigin: 'reported',
+  });
+  assert.equal(result.groundSpeedMetersPerSecond, 3.0);
+  assert.equal(result.speedOrigin, 'coordinate_derived');
+  assert.equal(result.courseDegrees, 90);
+  assert.equal(result.courseOrigin, 'reported');
+
+  const unavailable = normalizeTelemetryEvent({
+    speedKmh: null,
+    speedOrigin: 'unavailable',
+    courseDegrees: null,
+    courseOrigin: 'unavailable',
+  });
+  assert.equal(unavailable.groundSpeedMetersPerSecond, null);
+  assert.equal(unavailable.speedOrigin, 'unavailable');
+  assert.equal(unavailable.courseDegrees, null);
+  assert.equal(unavailable.courseOrigin, 'unavailable');
+});
+

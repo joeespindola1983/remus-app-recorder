@@ -128,7 +128,10 @@ class RemusTelemetryModule(private val reactContext: ReactApplicationContext) :
     // Running GPS / Metrics
     private var lastLocation: Location? = null
     private var totalDistanceMeters = 0.0
-    private var currentSpeedKmh = 0.0
+    private var currentSpeedKmh: Double? = null
+    private var speedOrigin: String = "unavailable"
+    private var courseOrigin: String = "unavailable"
+    private val recentQualifiedFixes = mutableListOf<Location>()
     private var lastEmitTimeMillis: Long = 0
     private val liveSpmHandle = LiveSpmNative.create()
     private var liveSpmResult: DoubleArray? = null
@@ -165,7 +168,10 @@ class RemusTelemetryModule(private val reactContext: ReactApplicationContext) :
             startTimeNanos = SystemClock.elapsedRealtimeNanos()
             startTimestampMillis = System.currentTimeMillis()
             totalDistanceMeters = 0.0
-            currentSpeedKmh = 0.0
+            currentSpeedKmh = null
+            speedOrigin = "unavailable"
+            courseOrigin = "unavailable"
+            recentQualifiedFixes.clear()
             lastLocation = null
             hasHardwareHeading = false
             hasHardwareLinearAcc = false
@@ -421,7 +427,9 @@ class RemusTelemetryModule(private val reactContext: ReactApplicationContext) :
                     }
 
                     val body = Arguments.createMap()
-                    body.putDouble("speedKmh", currentSpeedKmh)
+                    currentSpeedKmh?.let { body.putDouble("speedKmh", it) } ?: body.putNull("speedKmh")
+                    body.putString("speedOrigin", speedOrigin)
+                    body.putString("courseOrigin", courseOrigin)
                     body.putDouble("distanceMeters", totalDistanceMeters)
                     lastCourseDegrees?.let { body.putDouble("courseDegrees", it) } ?: body.putNull("courseDegrees")
 
@@ -590,43 +598,116 @@ class RemusTelemetryModule(private val reactContext: ReactApplicationContext) :
             }
         }
 
-        // Bearing is unreliable at walking/stationary speeds on many Android
-        // devices, even though hasBearing() returns true. Require motion before
-        // accepting it, then use a position-derived fallback when it is precise
-        // enough to be useful.
-        val movingSpeedMps = if (location.hasSpeed()) location.speed.toDouble() else 0.0
-        val hasUsableBearing = location.hasBearing() && movingSpeedMps >= 0.5
-        if (hasUsableBearing) {
-            lastCourseDegrees = normalizeDegrees(location.bearing.toDouble())
-            if (!hasHardwareHeading) {
-                lastHeadingDegrees = lastCourseDegrees
-            }
+        val positionOk = location.hasAccuracy() && location.accuracy <= 20.0f
+
+        // Speed accuracy evaluation
+        val hasValidSpeedAccuracy = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            !location.hasSpeedAccuracy() || (location.speedAccuracyMetersPerSecond in 0.0f..3.0f)
         } else {
-            lastLocation?.let { prev ->
-                val dist = location.distanceTo(prev)
-                val minimumReliableDisplacement = maxOf(3.0f, location.accuracy, prev.accuracy)
-                if (dist >= minimumReliableDisplacement) {
-                    val bearing = prev.bearingTo(location).toDouble()
-                    val normalizedBearing = normalizeDegrees(bearing)
-                    lastCourseDegrees = normalizedBearing
-                    if (!hasHardwareHeading) {
-                        lastHeadingDegrees = normalizedBearing
+            true
+        }
+        val reportedSpeedOk = location.hasSpeed() && location.speed >= 0.0f && hasValidSpeedAccuracy && location.speed <= 15.0f
+
+        var derivedSpeedMps: Double? = null
+        if (positionOk) {
+            val nowTimeMillis = location.time
+            val lastFix = recentQualifiedFixes.lastOrNull()
+            if (lastFix != null) {
+                val dtSec = (nowTimeMillis - lastFix.time) / 1000.0
+                if (dtSec > 0) {
+                    if (dtSec > 5.0) {
+                        recentQualifiedFixes.clear()
+                        recentQualifiedFixes.add(location)
+                    } else {
+                        val dist = location.distanceTo(lastFix).toDouble()
+                        val segSpeed = dist / dtSec
+                        if (segSpeed <= 15.0) {
+                            recentQualifiedFixes.add(location)
+                        }
+                    }
+                }
+            } else {
+                recentQualifiedFixes.add(location)
+            }
+
+            // Prune fixes older than 3.0 seconds
+            val cutoff = nowTimeMillis - 3000L
+            recentQualifiedFixes.removeAll { it.time < cutoff }
+
+            if (recentQualifiedFixes.size >= 2) {
+                val first = recentQualifiedFixes.first()
+                val last = recentQualifiedFixes.last()
+                val totalDt = (last.time - first.time) / 1000.0
+                if (totalDt >= 0.5) {
+                    var totalDist = 0.0
+                    for (i in 1 until recentQualifiedFixes.size) {
+                        totalDist += recentQualifiedFixes[i - 1].distanceTo(recentQualifiedFixes[i]).toDouble()
+                    }
+                    val avgSpeed = totalDist / totalDt
+                    if (avgSpeed <= 15.0) {
+                        derivedSpeedMps = avgSpeed
                     }
                 }
             }
         }
 
-        lastLocation = location
-
-        if (location.hasSpeed()) {
-            currentSpeedKmh = location.speed * 3.6
+        if (reportedSpeedOk) {
+            currentSpeedKmh = location.speed.toDouble() * 3.6
+            speedOrigin = "reported"
+        } else if (derivedSpeedMps != null) {
+            currentSpeedKmh = derivedSpeedMps * 3.6
+            speedOrigin = "coordinate_derived"
+        } else {
+            currentSpeedKmh = null
+            speedOrigin = "unavailable"
         }
+
+        // Bearing / course evaluation
+        val movingSpeedMps = if (reportedSpeedOk) location.speed.toDouble() else (derivedSpeedMps ?: 0.0)
+        val hasBearingAccuracy = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            !location.hasBearingAccuracy() || (location.bearingAccuracyDegrees in 0.0f..90.0f)
+        } else {
+            true
+        }
+        val hasUsableBearing = location.hasBearing() && movingSpeedMps >= 0.5 && hasBearingAccuracy
+
+        if (hasUsableBearing) {
+            lastCourseDegrees = normalizeDegrees(location.bearing.toDouble())
+            courseOrigin = "reported"
+            if (!hasHardwareHeading) {
+                lastHeadingDegrees = lastCourseDegrees
+            }
+        } else {
+            var derivedBearing: Double? = null
+            if (recentQualifiedFixes.size >= 2) {
+                val first = recentQualifiedFixes.first()
+                val last = recentQualifiedFixes.last()
+                val disp = first.distanceTo(last)
+                if (disp >= 3.0f) {
+                    derivedBearing = normalizeDegrees(first.bearingTo(last).toDouble())
+                }
+            }
+            if (derivedBearing != null) {
+                lastCourseDegrees = derivedBearing
+                courseOrigin = "coordinate_derived"
+                if (!hasHardwareHeading) {
+                    lastHeadingDegrees = derivedBearing
+                }
+            } else {
+                lastCourseDegrees = null
+                courseOrigin = "unavailable"
+            }
+        }
+
+        lastLocation = location
 
         w.recordLocation(location, elapsed, lastCourseDegrees)
         fetchWeatherIfNeeded(location, elapsed)
 
         val body = Arguments.createMap()
-        body.putDouble("speedKmh", currentSpeedKmh)
+        currentSpeedKmh?.let { body.putDouble("speedKmh", it) } ?: body.putNull("speedKmh")
+        body.putString("speedOrigin", speedOrigin)
+        body.putString("courseOrigin", courseOrigin)
         body.putDouble("distanceMeters", totalDistanceMeters)
         lastCourseDegrees?.let { body.putDouble("courseDegrees", it) } ?: body.putNull("courseDegrees")
         val headingDeg = Math.toDegrees(lastYawRad)
