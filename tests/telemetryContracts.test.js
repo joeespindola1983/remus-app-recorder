@@ -290,7 +290,7 @@ test('validates that iOS telemetry bridge sends gpsAccuracyMeters and adapter no
   const Module = require('node:module');
   const babel = require('@babel/core');
   function loadAdapter() {
-    const filename = path.resolve(__dirname, '../src/services/telemetryAdapter.ts');
+    const filename = path.resolve(__dirname, '../src/contracts/telemetryContract.ts');
     const compiled = babel.transformFileSync(filename, {
       configFile: false,
       babelrc: false,
@@ -324,6 +324,16 @@ test('validates that iOS telemetry bridge sends gpsAccuracyMeters and adapter no
 test('SessionManager.list sorts sessions by startedAt descending (newest first)', async () => {
   const Module = require('node:module');
   const babel = require('@babel/core');
+  if (!require.extensions['.ts']) {
+    require.extensions['.ts'] = function(module, filename) {
+      const compiled = babel.transformFileSync(filename, {
+        configFile: false,
+        babelrc: false,
+        presets: [require.resolve('@react-native/babel-preset')]
+      }).code;
+      module._compile(compiled, filename);
+    };
+  }
   function loadSessionManager() {
     const filename = path.resolve(__dirname, '../src/services/sessionManager.ts');
     const compiled = babel.transformFileSync(filename, {

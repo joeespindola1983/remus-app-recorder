@@ -15,14 +15,14 @@ import { t } from '../i18n';
 import { RecordingSessionSummary } from '../types/telemetry';
 import { SessionManager } from '../services/sessionManager';
 import { ExportManager } from '../services/exportManager';
-import { telemetryBridge } from '../services/telemetryBridge';
+import { bridgeContract } from '../contracts/bridgeContract';
 import { analyticsService } from '../services/analyticsService';
 import { syncService } from '../services/syncService';
 import { RecordingContextForm } from './RecordingContextForm';
 import { APP_DISPLAY_VERSION } from '../version';
 
-const sessionManager = new SessionManager(telemetryBridge);
-const exportManager = new ExportManager(telemetryBridge);
+const sessionManager = new SessionManager(bridgeContract);
+const exportManager = new ExportManager(bridgeContract);
 
 export const SessionsScreen: React.FC = () => {
   const [sessions, setSessions] = useState<RecordingSessionSummary[]>([]);

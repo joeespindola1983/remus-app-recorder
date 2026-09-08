@@ -5,6 +5,17 @@ const path = require('node:path');
 const Module = require('node:module');
 const babel = require('@babel/core');
 
+if (!require.extensions['.ts']) {
+  require.extensions['.ts'] = function(module, filename) {
+    const compiled = babel.transformFileSync(filename, {
+      configFile: false,
+      babelrc: false,
+      presets: [require.resolve('@react-native/babel-preset')]
+    }).code;
+    module._compile(compiled, filename);
+  };
+}
+
 function loadActual(relative, mocks = {}) {
   const filename = path.resolve(__dirname, '..', relative);
   const compiled = babel.transformFileSync(filename, {configFile: false, babelrc: false, presets: [require.resolve('@react-native/babel-preset')]}).code;
@@ -24,7 +35,7 @@ test('native platforms use the exact same versioned intake catalog as the produc
   assert.deepEqual(JSON.parse(kotlin.match(/JSONObject\("""(\{.*\})"""\)/)[1]), catalog);
 });
 test('telemetry boundary converts units, preserves zero and rejects incomplete rotation vectors', () => {
-  const {normalizeTelemetryEvent: convert} = loadActual('src/services/telemetryAdapter.ts');
+  const {normalizeTelemetryEvent: convert} = loadActual('src/contracts/telemetryContract.ts');
   assert.deepEqual(convert({speedKmh:36,weatherWindKmh:18,headingDegrees:0}), {groundSpeedMetersPerSecond:10,windSpeedMetersPerSecond:5,headingDegrees:0});
   assert.equal(convert({headingDegrees:null}).headingDegrees,null);
   assert.deepEqual(convert({rotationXRad:0,rotationYRad:1,rotationZRad:2}).rotationRateRadiansPerSecond,{x:0,y:1,z:2});

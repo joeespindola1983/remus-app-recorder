@@ -17,7 +17,8 @@ import { SessionManager } from '../services/sessionManager';
 import { telemetryBridge } from '../services/telemetryBridge';
 import { analyticsService } from '../services/analyticsService';
 import { RecordingContextForm } from './RecordingContextForm';
-import { normalizeTelemetryEvent } from '../services/telemetryAdapter';
+import { normalizeTelemetryEvent } from '../contracts/telemetryContract';
+import { getRecordingState } from '../contracts/bridgeContract';
 import { APP_DISPLAY_VERSION } from '../version';
 
 const sessionManager = new SessionManager(telemetryBridge);
@@ -108,7 +109,7 @@ export const RecorderScreen: React.FC = () => {
     let mounted = true;
     const restoreRecording = async () => {
       try {
-        const state = await telemetryBridge.getRecordingState();
+        const state = await getRecordingState();
         if (!mounted) return;
         setIsRecording(state.isRecording);
         setDuration(Math.max(0, Math.floor(state.elapsedSeconds ?? 0)));
@@ -126,7 +127,7 @@ export const RecorderScreen: React.FC = () => {
   useEffect(() => {
     if (!telemetryEmitter) return;
     const subscription = telemetryEmitter.addListener('onTelemetryUpdate', (data: Partial<MetricsState>) => {
-      setMetrics(prev => ({ ...prev, ...normalizeTelemetryEvent(data) }));
+      setMetrics(prev => ({ ...prev, ...normalizeTelemetryEvent(data, prev) }));
     });
     return () => {
       subscription.remove();

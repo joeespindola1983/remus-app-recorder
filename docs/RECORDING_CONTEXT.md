@@ -47,7 +47,7 @@ Names and routes in exported packages are personal data. Users must share only w
 
 ## Compatibility and remaining work
 
-The raw manifest/SQLite producer schemas stay unchanged. telemetryAdapter.ts translates legacy live-event names to canonical product identifiers, converts speed/wind km/h to m/s, preserves null vs zero and exposes one nullable XYZ rotationRateRadiansPerSecond vector. Display conversions do not change stored units. iOS now forwards all three native gyro axes independently of GPS updates. Legacy UI-only acceleration magnitude is not the canonical linearAccelerationG vector.
+The raw manifest/SQLite producer schemas stay unchanged. telemetryContract.ts translates legacy live-event names to canonical product identifiers, converts speed/wind km/h to m/s, preserves null vs zero and exposes one nullable XYZ rotationRateRadiansPerSecond vector. Display conversions do not change stored units. iOS now forwards all three native gyro axes independently of GPS updates. Legacy UI-only acceleration magnitude is not the canonical linearAccelerationG vector.
 
 This is not full platform conformance: authenticated actor/access scope, artifact hashes and verified custody, multi-recording activity association, Watch correlation propagation, measured-target identity/clock qualification, revisioned enrichment, imports, hardware adapters and C++ admission remain separate work. No hull analysis, individual attribution or research admission follows merely from completing this form.
 

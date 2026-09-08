@@ -4,6 +4,7 @@ import {
   StartRecordingResult
 } from './telemetryBridge';
 import { RecordingManifest, RecordingSessionSummary } from '../types/telemetry';
+import { normalizeManifest } from '../contracts/manifestContract';
 
 export class SessionManager {
   private bridge: ITelemetryNativeBridge;
@@ -34,10 +35,10 @@ export class SessionManager {
   }
 
   async stop(): Promise<RecordingManifest> {
-    const manifest = await this.bridge.stopRecording();
+    const rawManifest = await this.bridge.stopRecording();
     this.recording = false;
     this.currentSessionId = undefined;
-    return manifest;
+    return normalizeManifest(rawManifest);
   }
 
   async restore(): Promise<boolean> {

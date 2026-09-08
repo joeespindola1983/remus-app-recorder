@@ -44,10 +44,10 @@ export interface RecordingManifest {
   placement: SensorPlacement;
   motionSampleCount: number;
   locationSampleCount: number;
-  headingSampleCount: number;
-  altimeterSampleCount: number;
-  weatherSampleCount: number;
-  status: 'recording' | 'completed' | 'failed';
+  headingSampleCount?: number;
+  altimeterSampleCount?: number;
+  weatherSampleCount?: number;
+  status: 'recording' | 'completed' | 'failed' | 'interrupted';
   failureMessage?: string;
   databaseFilename: string;
 }
