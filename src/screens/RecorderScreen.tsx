@@ -207,7 +207,8 @@ export const RecorderScreen: React.FC = () => {
   };
 
   const originBadge = (origin: 'reported' | 'coordinate_derived' | 'unavailable' | null) => {
-    if (!origin || origin === 'unavailable') return null;
+    if (!origin) return null;
+    if (origin === 'unavailable') return t('recorder.origin.unavailable');
     if (origin === 'coordinate_derived') return t('recorder.origin.coordinateDerived');
     return t('recorder.origin.reported');
   };
