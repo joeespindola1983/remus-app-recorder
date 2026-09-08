@@ -54,6 +54,34 @@ interface MetricsState {
   strokeRateOrigin: string | null;
 }
 
+const INITIAL_METRICS: MetricsState = {
+  groundSpeedMetersPerSecond: null,
+  distanceMeters: null,
+  courseDegrees: null,
+  headingDegrees: null,
+  accelerationG: null,
+  rotationRateRadiansPerSecond: null,
+  horizontalAccuracyMeters: null,
+  samplingRateHertz: null,
+  imuSamples: 0,
+  altitudeMeters: null,
+  pressureKPa: null,
+  heartRateBeatsPerMinute: null,
+  weatherStatus: 'Waiting for location…',
+  airTemperatureCelsius: null,
+  weatherHumidityPercent: null,
+  windSpeedMetersPerSecond: null,
+  strokeRateSpm: null,
+  strokeRateStatus: null,
+  strokeRateReason: null,
+  strokeRatePeriodicity: null,
+  strokeRateProgress: null,
+  strokeRateWindowSeconds: null,
+  strokeRateObservedHertz: null,
+  strokeRateAlgorithmVersion: null,
+  strokeRateOrigin: null
+};
+
 export const RecorderScreen: React.FC = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [isAcquiringGPS, setIsAcquiringGPS] = useState(false);
@@ -63,33 +91,13 @@ export const RecorderScreen: React.FC = () => {
   const [transitioning, setTransitioning] = useState(false);
 
   // A missing observation is not a measured zero.
-  const [metrics, setMetrics] = useState<MetricsState>({
-    groundSpeedMetersPerSecond: null,
-    distanceMeters: null,
-    courseDegrees: null,
-    headingDegrees: null,
-    accelerationG: null,
-    rotationRateRadiansPerSecond: null,
-    horizontalAccuracyMeters: null,
-    samplingRateHertz: null,
-    imuSamples: 0,
-    altitudeMeters: null,
-    pressureKPa: null,
-    heartRateBeatsPerMinute: null,
-    weatherStatus: 'Waiting for location…',
-    airTemperatureCelsius: null,
-    weatherHumidityPercent: null,
-    windSpeedMetersPerSecond: null,
-    strokeRateSpm: null,
-    strokeRateStatus: null,
-    strokeRateReason: null,
-    strokeRatePeriodicity: null,
-    strokeRateProgress: null,
-    strokeRateWindowSeconds: null,
-    strokeRateObservedHertz: null,
-    strokeRateAlgorithmVersion: null,
-    strokeRateOrigin: null
-  });
+  const [metrics, setMetrics] = useState<MetricsState>(INITIAL_METRICS);
+
+  const resetScreenState = () => {
+    setDuration(0);
+    setMetrics(INITIAL_METRICS);
+    setIsAcquiringGPS(false);
+  };
 
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null;
@@ -185,6 +193,7 @@ export const RecorderScreen: React.FC = () => {
         motionSampleCount: manifest.motionSampleCount,
         locationSampleCount: manifest.locationSampleCount,
       });
+      resetScreenState();
     } catch (err: any) {
       console.error(err);
       analyticsService.recordError(err, 'RecorderScreen:handleStop');
@@ -221,7 +230,15 @@ export const RecorderScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      {pendingRecordingId && <RecordingContextForm recordingId={pendingRecordingId} onClose={() => setPendingRecordingId(null)} />}
+      {pendingRecordingId && (
+        <RecordingContextForm
+          recordingId={pendingRecordingId}
+          onClose={() => {
+            setPendingRecordingId(null);
+            resetScreenState();
+          }}
+        />
+      )}
       <ScrollView contentContainerStyle={styles.container}>
         
         {/* Recording Card */}
