@@ -7,21 +7,47 @@ import {
   TouchableOpacity,
   Text
 } from 'react-native';
+import { HomeScreen, RecordingMode } from './screens/HomeScreen';
 import { RecorderScreen } from './screens/RecorderScreen';
 import { SessionsScreen } from './screens/SessionsScreen';
 
 export const App = () => {
-  const [currentTab, setCurrentTab] = useState<'record' | 'sessions'>('record');
+  const [currentTab, setCurrentTab] = useState<'home' | 'record' | 'sessions'>('home');
+  const [recordingMode, setRecordingMode] = useState<RecordingMode>('free');
+  const [targetDistance, setTargetDistance] = useState<number | null>(null);
+
+  const handleSelectMode = (mode: RecordingMode, distance: number | null) => {
+    setRecordingMode(mode);
+    setTargetDistance(distance);
+    setCurrentTab('record');
+  };
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#0F172A" />
 
       <View style={styles.content}>
-        {currentTab === 'record' ? <RecorderScreen /> : <SessionsScreen />}
+        {currentTab === 'home' && <HomeScreen onSelectMode={handleSelectMode} />}
+        {currentTab === 'record' && (
+          <RecorderScreen 
+            mode={recordingMode} 
+            targetDistance={targetDistance} 
+            onCancel={() => setCurrentTab('home')} 
+          />
+        )}
+        {currentTab === 'sessions' && <SessionsScreen />}
       </View>
 
       <View style={styles.bottomNav}>
+        <TouchableOpacity
+          style={[styles.navTab, currentTab === 'home' && styles.navTabActive]}
+          onPress={() => setCurrentTab('home')}
+        >
+          <Text style={[styles.navText, currentTab === 'home' && styles.navTextActive]}>
+            🏠 Início
+          </Text>
+        </TouchableOpacity>
+
         <TouchableOpacity
           style={[styles.navTab, currentTab === 'record' && styles.navTabActive]}
           onPress={() => setCurrentTab('record')}

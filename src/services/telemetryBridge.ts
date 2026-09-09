@@ -30,6 +30,7 @@ export interface ITelemetryNativeBridge {
   listSessions(): Promise<RecordingSessionSummary[]>;
   deleteSession(sessionId: string): Promise<boolean>;
   exportSessionZip(sessionId: string): Promise<string>;
+  playBeep(isLoud: boolean): Promise<void>;
 }
 
 const { RemusTelemetryModule } = NativeModules;
@@ -118,6 +119,12 @@ export class TelemetryNativeBridge implements ITelemetryNativeBridge {
       return await RemusTelemetryModule.exportSessionZip(sessionId);
     }
     throw new Error('RemusTelemetryModule native module is not available');
+  }
+
+  async playBeep(isLoud: boolean): Promise<void> {
+    if (RemusTelemetryModule && RemusTelemetryModule.playBeep) {
+      await RemusTelemetryModule.playBeep(isLoud);
+    }
   }
 }
 

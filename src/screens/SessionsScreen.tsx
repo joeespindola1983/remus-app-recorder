@@ -163,7 +163,9 @@ export const SessionsScreen: React.FC = () => {
           renderItem={({ item }) => (
             <View style={styles.sessionCard}>
               <View style={styles.sessionHeader}>
-                <Text style={styles.sessionIdText}>{item.id.substring(0, 8)}</Text>
+                <Text style={styles.sessionIdText}>
+                  {item.sessionTitle || item.id.substring(0, 8)}
+                </Text>
                 <Text style={styles.placementBadge}>{item.placement}</Text>
               </View>
 

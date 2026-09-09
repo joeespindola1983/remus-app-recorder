@@ -30,6 +30,7 @@ export interface RecordingContext {
   seatNumberingConvention: 'source_declared';
   notes: string;
   finalizedAt?: string;
+  sessionTitle?: string | null;
 }
 
 export { catalog };

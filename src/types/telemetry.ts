@@ -84,4 +84,5 @@ export interface RecordingSessionSummary {
   sampleCount: number;
   placement: SensorPlacement;
   hasWatchRecording: boolean;
+  sessionTitle?: string | null;
 }

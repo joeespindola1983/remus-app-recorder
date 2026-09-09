@@ -15,6 +15,8 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.PowerManager
 import android.os.SystemClock
+import android.media.ToneGenerator
+import android.media.AudioManager
 import androidx.core.content.FileProvider
 import com.facebook.react.bridge.*
 import com.facebook.react.modules.core.DeviceEventManagerModule
@@ -35,6 +37,20 @@ class RemusTelemetryModule(private val reactContext: ReactApplicationContext) :
 
     private var writer: AndroidSessionDatabaseWriter? = null
     private var activeSessionId: String? = null
+
+    @ReactMethod
+    fun playBeep(isLoud: Boolean, promise: Promise) {
+        try {
+            val toneType = if (isLoud) ToneGenerator.TONE_CDMA_ABBR_ALERT else ToneGenerator.TONE_PROP_BEEP
+            val volume = if (isLoud) 100 else 70
+            val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, volume)
+            toneGen.startTone(toneType, if (isLoud) 400 else 150)
+            Handler(reactContext.mainLooper).postDelayed({ toneGen.release() }, 500)
+            promise.resolve(null)
+        } catch (e: Exception) {
+            promise.resolve(null) // ignore errors if audio fails
+        }
+    }
 
     @ReactMethod
     fun getRecordingContext(recordingId: String, promise: Promise) {
@@ -830,6 +846,7 @@ class RemusTelemetryModule(private val reactContext: ReactApplicationContext) :
                 item.putString("notes", manifest.optString("notes", ""))
                 item.putString("status", manifest.optString("status", "completed"))
                 item.putString("contextCompleteness", context?.optString("contextCompleteness", "needs_required_context") ?: "needs_required_context")
+                item.putString("sessionTitle", context?.optString("sessionTitle", null))
 
                 // Calculate duration in seconds
                 val startedAtStr = startedAt

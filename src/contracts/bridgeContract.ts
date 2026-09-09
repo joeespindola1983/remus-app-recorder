@@ -81,6 +81,10 @@ export class BridgeContract implements ITelemetryNativeBridge {
   async exportSessionZip(sessionId: string): Promise<string> {
     return this.bridge.exportSessionZip(sessionId);
   }
+
+  async playBeep(isLoud: boolean): Promise<void> {
+    return this.bridge.playBeep(isLoud);
+  }
 }
 
 export const bridgeContract = new BridgeContract(telemetryBridge);

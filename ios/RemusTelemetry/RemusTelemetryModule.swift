@@ -2,6 +2,7 @@ import Foundation
 import React
 import Combine
 import CoreLocation
+import AudioToolbox
 
 @objc(RemusTelemetryModule)
 class RemusTelemetryModule: RCTEventEmitter {
@@ -81,6 +82,12 @@ class RemusTelemetryModule: RCTEventEmitter {
         }
     }
     
+    @objc
+    func playBeep(_ isLoud: Bool, resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+        AudioServicesPlaySystemSound(isLoud ? 1054 : 1052)
+        resolve(nil)
+    }
+
     override func supportedEvents() -> [String]! {
         return ["onTelemetryUpdate"]
     }
@@ -288,7 +295,8 @@ class RemusTelemetryModule: RCTEventEmitter {
                     "sizeBytes": folderSize,
                     "hasWatchRecording": hasWatch,
                     "status": manifest.status.rawValue,
-                    "contextCompleteness": context?["contextCompleteness"] as? String ?? "needs_required_context"
+                    "contextCompleteness": context?["contextCompleteness"] as? String ?? "needs_required_context",
+                    "sessionTitle": context?["sessionTitle"] as? String
                 ])
             }
 

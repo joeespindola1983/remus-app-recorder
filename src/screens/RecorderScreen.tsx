@@ -86,8 +86,21 @@ const INITIAL_METRICS: MetricsState = {
   strokeRateOrigin: null
 };
 
-export const RecorderScreen: React.FC = () => {
+import { RecordingMode } from './HomeScreen';
+
+export interface RecorderScreenProps {
+  mode?: RecordingMode;
+  targetDistance?: number | null;
+  onCancel?: () => void;
+}
+
+export const RecorderScreen: React.FC<RecorderScreenProps> = ({ 
+  mode = 'free', 
+  targetDistance = null, 
+  onCancel 
+}) => {
   const [isRecording, setIsRecording] = useState(false);
+  const [countdown, setCountdown] = useState<number | null>(null);
   const [isAcquiringGPS, setIsAcquiringGPS] = useState(false);
   const [duration, setDuration] = useState(0);
   const [placement] = useState<SensorPlacement>('unknown');
@@ -158,11 +171,26 @@ export const RecorderScreen: React.FC = () => {
     telemetryBridge.requestPermissions().catch(console.warn);
   }, []);
 
+  
+  useEffect(() => {
+    if (isRecording && mode !== 'free' && targetDistance != null) {
+      if (metrics.distanceMeters != null && metrics.distanceMeters >= targetDistance) {
+        telemetryBridge.playBeep(true);
+        handleStop();
+      }
+    }
+  }, [isRecording, metrics.distanceMeters, mode, targetDistance]);
+
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
+
+  
+  const isGpsReady = metrics.horizontalAccuracyMeters != null && metrics.horizontalAccuracyMeters <= 10;
+  const isBoatStopped = metrics.groundSpeedMetersPerSecond != null && metrics.groundSpeedMetersPerSecond < 0.5;
+  const isReadyToSprint = isGpsReady && isBoatStopped;
 
   const handleStart = async () => {
     if (transitioning) return;
@@ -262,8 +290,9 @@ export const RecorderScreen: React.FC = () => {
   return (
     <SafeAreaView style={styles.safeArea}>
       {pendingRecordingId && (
-        <RecordingContextForm
-          recordingId={pendingRecordingId}
+        <RecordingContextForm 
+          recordingId={pendingRecordingId} 
+          isSprint={mode !== 'free'}
           onClose={() => {
             setPendingRecordingId(null);
             resetScreenState();
@@ -355,6 +384,48 @@ export const RecorderScreen: React.FC = () => {
 };
 
 const styles = StyleSheet.create({
+  disabledButton: {
+    backgroundColor: '#475569',
+    opacity: 0.7
+  },
+  countdownOverlay: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(15, 23, 42, 0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 100,
+  },
+  countdownText: {
+    fontSize: 120,
+    fontWeight: 'bold',
+    color: '#38BDF8',
+  },
+  sprintStatus: {
+    backgroundColor: '#1E293B',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+    alignItems: 'center',
+  },
+  warningText: {
+    color: '#F59E0B',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  readyText: {
+    color: '#10B981',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  cancelButton: {
+    padding: 8,
+  },
+  cancelButtonText: {
+    color: '#94A3B8',
+    fontSize: 16,
+  },
+
   safeArea: {
     flex: 1,
     backgroundColor: '#0F172A'
