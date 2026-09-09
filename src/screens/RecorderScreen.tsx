@@ -86,21 +86,17 @@ const INITIAL_METRICS: MetricsState = {
   strokeRateOrigin: null
 };
 
-import { RecordingMode } from './HomeScreen';
 
-export interface RecorderScreenProps {
-  mode?: RecordingMode;
-  targetDistance?: number | null;
-  onCancel?: () => void;
-}
 
-export const RecorderScreen: React.FC<RecorderScreenProps> = ({ 
-  mode = 'free', 
-  targetDistance = null, 
-  onCancel 
-}) => {
+export const RecorderScreen: React.FC = () => {
   const [isRecording, setIsRecording] = useState(false);
-  const [countdown, setCountdown] = useState<number | null>(null);
+
+  const [activeTab, setActiveTab] = useState<'treino' | 'sprints' | 'sensores'>('treino');
+  const [completedSprints, setCompletedSprints] = useState<{ targetDistance: number; durationSeconds: number; startedAt: string; }[]>([]);
+  const [activeSprint, setActiveSprint] = useState<{ target: number; startDistance: number; startTime: number } | null>(null);
+  const [sprintPending, setSprintPending] = useState<number | null>(null); // pending sprint target
+  const [sprintCountdown, setSprintCountdown] = useState<number | null>(null);
+
   const [isAcquiringGPS, setIsAcquiringGPS] = useState(false);
   const [duration, setDuration] = useState(0);
   const [placement] = useState<SensorPlacement>('unknown');
@@ -188,9 +184,63 @@ export const RecorderScreen: React.FC<RecorderScreenProps> = ({
   };
 
   
-  const isGpsReady = metrics.horizontalAccuracyMeters != null && metrics.horizontalAccuracyMeters <= 10;
-  const isBoatStopped = metrics.groundSpeedMetersPerSecond != null && metrics.groundSpeedMetersPerSecond < 0.5;
+  
+  useEffect(() => {
+    if (activeSprint && metrics.distanceMeters != null) {
+      const dist = metrics.distanceMeters - activeSprint.startDistance;
+      if (dist >= activeSprint.target) {
+        telemetryBridge.playBeep(true);
+        const durationSeconds = (Date.now() - activeSprint.startTime) / 1000;
+        setCompletedSprints(prev => [...prev, {
+          targetDistance: activeSprint.target,
+          durationSeconds,
+          startedAt: new Date(activeSprint.startTime).toISOString()
+        }]);
+        setActiveSprint(null);
+      }
+    }
+  }, [metrics.distanceMeters, activeSprint]);
+
+  const isGpsReady = metrics.horizontalAccuracyMeters != null && metrics.horizontalAccuracyMeters <= 5;
+  const isBoatStopped = metrics.groundSpeedMetersPerSecond != null && metrics.groundSpeedMetersPerSecond < 0.3;
   const isReadyToSprint = isGpsReady && isBoatStopped;
+
+  useEffect(() => {
+    if (sprintPending && isReadyToSprint && sprintCountdown === null) {
+      let timeLeft = 10;
+      setSprintCountdown(timeLeft);
+      
+      const interval = setInterval(async () => {
+        timeLeft -= 1;
+        if (timeLeft > 0 && timeLeft <= 3) {
+          await telemetryBridge.playBeep(false);
+        }
+        
+        if (timeLeft <= 0) {
+          clearInterval(interval);
+          setSprintCountdown(null);
+          await telemetryBridge.playBeep(true);
+          
+          setActiveSprint({
+            target: sprintPending,
+            startDistance: metrics.distanceMeters || 0,
+            startTime: Date.now()
+          });
+          setSprintPending(null);
+        } else {
+          setSprintCountdown(timeLeft);
+        }
+      }, 1000);
+      
+      return () => clearInterval(interval);
+    }
+  }, [sprintPending, isReadyToSprint, sprintCountdown]);
+
+  const cancelSprint = () => {
+    setSprintPending(null);
+    setSprintCountdown(null);
+    setActiveSprint(null);
+  };
 
   const handleStart = async () => {
     if (transitioning) return;
@@ -287,296 +337,276 @@ export const RecorderScreen: React.FC<RecorderScreenProps> = ({
     return t('recorder.spm.collecting').replace('{{seconds}}', String(remaining));
   };
 
+
+  const pace = metrics.groundSpeedMetersPerSecond && metrics.groundSpeedMetersPerSecond > 0 
+    ? 500 / metrics.groundSpeedMetersPerSecond 
+    : 0;
+
   return (
     <SafeAreaView style={styles.safeArea}>
       {pendingRecordingId && (
         <RecordingContextForm 
           recordingId={pendingRecordingId} 
-          isSprint={mode !== 'free'}
+          sprints={completedSprints}
           onClose={() => {
             setPendingRecordingId(null);
             resetScreenState();
-          }}
+          }} 
         />
       )}
+
+      {/* Global Header */}
+      <View style={styles.globalHeader}>
+        <View style={styles.headerRow}>
+          <View style={styles.statusRow}>
+            <View style={[styles.dot, { backgroundColor: isRecording ? '#EF4444' : '#64748B' }]} />
+            <Text style={styles.statusText}>
+              {isRecording ? t('recorder.status.recording') : (isAcquiringGPS ? t('recorder.status.acquiringGps') : t('recorder.status.ready'))}
+            </Text>
+          </View>
+          {isRecording && (
+            <Text style={styles.timerText}>{formatDuration(duration)}</Text>
+          )}
+        </View>
+
+        <TouchableOpacity
+          style={[styles.mainButton, isRecording ? styles.stopButton : styles.startButton]}
+          onPress={isRecording ? handleStop : handleStart}
+          disabled={transitioning || sprintPending !== null || activeSprint !== null}
+        >
+          <Text style={styles.mainButtonText}>
+            {isRecording ? t('recording.stop') : t('recording.start')}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Tabs */}
+      {isRecording && (
+        <View style={styles.tabsRow}>
+          <TouchableOpacity style={[styles.tabBtn, activeTab === 'treino' && styles.tabBtnActive]} onPress={() => setActiveTab('treino')}>
+            <Text style={[styles.tabText, activeTab === 'treino' && styles.tabTextActive]}>Treino</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.tabBtn, activeTab === 'sprints' && styles.tabBtnActive]} onPress={() => setActiveTab('sprints')}>
+            <Text style={[styles.tabText, activeTab === 'sprints' && styles.tabTextActive]}>Sprints</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.tabBtn, activeTab === 'sensores' && styles.tabBtnActive]} onPress={() => setActiveTab('sensores')}>
+            <Text style={[styles.tabText, activeTab === 'sensores' && styles.tabTextActive]}>Sensores</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       <ScrollView contentContainerStyle={styles.container}>
-        
-        {/* Recording Card */}
-        <View style={styles.card}>
-          <View style={styles.headerRow}>
-            <View style={styles.statusRow}>
-              <View style={[styles.dot, { backgroundColor: isRecording ? '#EF4444' : '#64748B' }]} />
-              <Text style={styles.statusText}>
-                {isRecording ? t('recorder.status.recording') : (isAcquiringGPS ? t('recorder.status.acquiringGps') : t('recorder.status.ready'))}
-              </Text>
+        {!isRecording ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyText}>Pressione GRAVAR para iniciar.</Text>
+          </View>
+        ) : activeTab === 'treino' ? (
+          <View style={styles.treinoTab}>
+            
+            <View style={styles.spmCard}>
+              <View>
+                <Text style={styles.spmTitle}>{t('recorder.spm.title')}</Text>
+                <Text style={styles.spmDetail}>{strokeRateDetail()}</Text>
+              </View>
+              <View style={[styles.spmValueRow, spmDisplay.status === 'stale' && { opacity: 0.5 }]}>
+                <Text style={[styles.spmValue, spmDisplay.status === 'stale' && { color: '#64748B' }]}>
+                  {spmDisplay.value !== null ? spmDisplay.value.toFixed(1) : '—'}
+                </Text>
+                <Text style={styles.spmUnit}>SPM</Text>
+              </View>
             </View>
-            {isRecording && (
-              <Text style={styles.timerText}>{formatDuration(duration)}</Text>
+
+            <View style={styles.metricsGrid}>
+              {renderMetricTile('Pace (500m)', pace > 0 ? formatDuration(Math.floor(pace)) : '—', 'min:sec')}
+              {renderMetricTile('Distância Total', metrics.distanceMeters?.toFixed(0) ?? '—', 'm')}
+            </View>
+
+            {/* Sprints Block */}
+            <View style={styles.sprintControls}>
+              <Text style={styles.cardTitle}>Tiros (Sprints)</Text>
+              
+              {activeSprint ? (
+                <View style={styles.activeSprintBox}>
+                  <Text style={styles.sprintTitle}>Tiro de {activeSprint.target}m em andamento</Text>
+                  <Text style={styles.sprintDistanceText}>
+                    {((metrics.distanceMeters || 0) - activeSprint.startDistance).toFixed(0)}m percorridos
+                  </Text>
+                  <TouchableOpacity style={styles.cancelSprintBtn} onPress={cancelSprint}>
+                    <Text style={styles.cancelSprintText}>Cancelar Tiro</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : sprintPending ? (
+                <View style={styles.pendingSprintBox}>
+                  {sprintCountdown !== null ? (
+                    <Text style={styles.countdownBig}>{sprintCountdown}</Text>
+                  ) : !isGpsReady ? (
+                    <Text style={styles.warningText}>Aguardando GPS...</Text>
+                  ) : !isBoatStopped ? (
+                    <Text style={styles.warningText}>Aguarde o barco parar...</Text>
+                  ) : (
+                    <Text style={styles.readyText}>Pronto...</Text>
+                  )}
+                  <TouchableOpacity style={styles.cancelSprintBtn} onPress={cancelSprint}>
+                    <Text style={styles.cancelSprintText}>Cancelar</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View style={styles.sprintButtonsRow}>
+                  <TouchableOpacity style={styles.sprintBtn} onPress={() => setSprintPending(250)}><Text style={styles.sprintBtnText}>250m</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.sprintBtn} onPress={() => setSprintPending(500)}><Text style={styles.sprintBtnText}>500m</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.sprintBtn} onPress={() => setSprintPending(1000)}><Text style={styles.sprintBtnText}>1000m</Text></TouchableOpacity>
+                </View>
+              )}
+            </View>
+          </View>
+        ) : activeTab === 'sprints' ? (
+          <View style={styles.sprintsList}>
+            {completedSprints.length === 0 ? (
+              <Text style={styles.emptyText}>Nenhum tiro registrado neste treino.</Text>
+            ) : (
+              completedSprints.map((s, i) => (
+                <View key={i} style={styles.sprintItem}>
+                  <Text style={styles.sprintItemTitle}>Tiro {s.targetDistance}m</Text>
+                  <Text style={styles.sprintItemTime}>{formatDuration(Math.floor(s.durationSeconds))}</Text>
+                </View>
+              ))
             )}
           </View>
-
-          <TouchableOpacity
-            style={[
-              styles.mainButton,
-              isRecording ? styles.stopButton : styles.startButton
-            ]}
-            onPress={isRecording ? handleStop : handleStart}
-            disabled={transitioning}
-          >
-            <Text style={styles.mainButtonText}>
-              {isRecording ? t('recording.stop') : t('recording.start')}
-            </Text>
-          </TouchableOpacity>
-
-          {isRecording && (
-            <View style={styles.tipContainer}>
-              <Text style={styles.tipIcon}>💡</Text>
-              <Text style={styles.tipText}>{t('recording.screenOffTip')}</Text>
-            </View>
-          )}
-        </View>
-
-        <View style={styles.spmCard}>
-          <View>
-            <Text style={styles.spmTitle}>{t('recorder.spm.title')}</Text>
-            <Text style={styles.spmDetail}>{strokeRateDetail()}</Text>
+        ) : (
+          <View style={styles.metricsGrid}>
+            {renderMetricTile('Speed', metrics.groundSpeedMetersPerSecond === null ? '—' : (metrics.groundSpeedMetersPerSecond * 3.6).toFixed(1), 'km/h', originBadge(metrics.speedOrigin))}
+            {renderMetricTile('Course', metrics.courseDegrees === null ? '—' : `${metrics.courseDegrees.toFixed(0)}°`, 'movement', originBadge(metrics.courseOrigin))}
+            {renderMetricTile('Heading', metrics.headingDegrees === null ? '—' : `${metrics.headingDegrees.toFixed(0)}°`, 'phone')}
+            {renderMetricTile('Acceleration', metrics.accelerationG?.toFixed(3) ?? '—', 'g')}
+            {renderMetricTile('Rotation (X/Y/Z)', rotationValue(), 'rad/s')}
+            {renderMetricTile('GPS accuracy', metrics.horizontalAccuracyMeters !== null ? metrics.horizontalAccuracyMeters.toFixed(0) : '—', 'm')}
+            {renderMetricTile('GPS rate', metrics.samplingRateHertz?.toFixed(2) ?? '—', 'Hz')}
+            {renderMetricTile('IMU samples', metrics.imuSamples?.toString() ?? '—', '100 Hz')}
           </View>
-          <View style={[styles.spmValueRow, spmDisplay.status === 'stale' && { opacity: 0.5 }]}>
-            <Text style={[styles.spmValue, spmDisplay.status === 'stale' && { color: '#64748B' }]}>
-              {spmDisplay.value !== null ? spmDisplay.value.toFixed(1) : '—'}
-            </Text>
-            <Text style={styles.spmUnit}>SPM</Text>
-          </View>
-        </View>
-
-        {/* Metrics Grid */}
-        <View style={styles.metricsGrid}>
-          {renderMetricTile('Speed', metrics.groundSpeedMetersPerSecond === null ? '—' : (metrics.groundSpeedMetersPerSecond * 3.6).toFixed(1), 'km/h', originBadge(metrics.speedOrigin))}
-          {renderMetricTile('Distance', metrics.distanceMeters?.toFixed(0) ?? '—', 'm')}
-          {renderMetricTile('Course', metrics.courseDegrees === null ? '—' : `${metrics.courseDegrees.toFixed(0)}°`, 'movement', originBadge(metrics.courseOrigin))}
-          {renderMetricTile('Heading', metrics.headingDegrees === null ? '—' : `${metrics.headingDegrees.toFixed(0)}°`, 'phone')}
-          {renderMetricTile('Acceleration', metrics.accelerationG?.toFixed(3) ?? '—', 'g')}
-          {renderMetricTile('Rotation (X/Y/Z)', rotationValue(), 'rad/s')}
-          {renderMetricTile('GPS accuracy', metrics.horizontalAccuracyMeters !== null ? metrics.horizontalAccuracyMeters.toFixed(0) : '—', 'm')}
-          {renderMetricTile('GPS rate', metrics.samplingRateHertz?.toFixed(2) ?? '—', 'Hz delivered')}
-          {renderMetricTile('IMU samples', metrics.imuSamples?.toString() ?? '—', '100 Hz target')}
-          {renderMetricTile('Rel. altitude', metrics.altitudeMeters !== null ? metrics.altitudeMeters.toFixed(1) : '—', 'm')}
-          {renderMetricTile('Pressure', metrics.pressureKPa !== null ? metrics.pressureKPa.toFixed(2) : '—', 'kPa')}
-          {renderMetricTile('Heart Rate', metrics.heartRateBeatsPerMinute ? metrics.heartRateBeatsPerMinute.toString() : '—', 'bpm (Watch/BLE)')}
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Weather</Text>
-          {metrics.airTemperatureCelsius === null ? (
-            <Text style={styles.secondaryText}>{metrics.weatherStatus}</Text>
-          ) : (
-            <Text style={styles.secondaryText}>
-              {metrics.airTemperatureCelsius.toFixed(1)}°C · {metrics.weatherHumidityPercent?.toFixed(0) ?? '—'}% humidity · {(metrics.windSpeedMetersPerSecond === null ? undefined : (metrics.windSpeedMetersPerSecond * 3.6).toFixed(1)) ?? '—'} km/h wind
-            </Text>
-          )}
-        </View>
-        <View style={styles.versionFooter}>
-          <Text style={styles.versionFooterText}>{APP_DISPLAY_VERSION}</Text>
-        </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
-  disabledButton: {
-    backgroundColor: '#475569',
-    opacity: 0.7
-  },
-  countdownOverlay: {
-    position: 'absolute',
-    top: 0, left: 0, right: 0, bottom: 0,
-    backgroundColor: 'rgba(15, 23, 42, 0.9)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 100,
-  },
-  countdownText: {
-    fontSize: 120,
-    fontWeight: 'bold',
-    color: '#38BDF8',
-  },
-  sprintStatus: {
-    backgroundColor: '#1E293B',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 16,
-    alignItems: 'center',
-  },
-  warningText: {
-    color: '#F59E0B',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  readyText: {
-    color: '#10B981',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  cancelButton: {
-    padding: 8,
-  },
-  cancelButtonText: {
-    color: '#94A3B8',
-    fontSize: 16,
-  },
-
-  safeArea: {
-    flex: 1,
-    backgroundColor: '#0F172A'
-  },
-  container: {
+  globalHeader: {
     padding: 16,
+    backgroundColor: '#0F172A',
+    borderBottomWidth: 1,
+    borderBottomColor: '#334155'
+  },
+  tabsRow: {
+    flexDirection: 'row',
+    backgroundColor: '#1E293B',
+    borderBottomWidth: 1,
+    borderBottomColor: '#334155'
+  },
+  tabBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: 'center'
+  },
+  tabBtnActive: {
+    borderBottomWidth: 2,
+    borderBottomColor: '#38BDF8'
+  },
+  tabText: {
+    color: '#64748B',
+    fontWeight: '600'
+  },
+  tabTextActive: {
+    color: '#38BDF8'
+  },
+  treinoTab: {
     gap: 16
   },
-  card: {
+  emptyState: {
+    padding: 32,
+    alignItems: 'center'
+  },
+  emptyText: {
+    color: '#64748B',
+    fontSize: 16
+  },
+  sprintControls: {
     backgroundColor: '#1E293B',
+    padding: 16,
     borderRadius: 16,
-    padding: 16
+    marginTop: 8
   },
-  headerRow: {
+  sprintButtonsRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16
-  },
-  statusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
     gap: 8
   },
-  dot: {
-    width: 12,
-    height: 12,
+  sprintBtn: {
+    flex: 1,
+    backgroundColor: '#334155',
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center'
+  },
+  sprintBtnText: {
+    color: '#F8FAFC',
+    fontWeight: '600'
+  },
+  pendingSprintBox: {
+    alignItems: 'center',
+    padding: 16,
+    backgroundColor: '#0F172A',
+    borderRadius: 8
+  },
+  countdownBig: {
+    fontSize: 48,
+    fontWeight: 'bold',
+    color: '#38BDF8'
+  },
+  activeSprintBox: {
+    alignItems: 'center',
+    padding: 16,
+    backgroundColor: '#0284C7',
+    borderRadius: 8
+  },
+  sprintTitle: {
+    color: '#BAE6FD',
+    fontSize: 14,
+    fontWeight: '600'
+  },
+  sprintDistanceText: {
+    color: '#F8FAFC',
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginVertical: 8
+  },
+  cancelSprintBtn: {
+    marginTop: 12,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    backgroundColor: 'rgba(0,0,0,0.3)',
     borderRadius: 6
   },
-  statusText: {
+  cancelSprintText: {
+    color: '#F8FAFC',
+    fontSize: 12
+  },
+  sprintsList: {
+    gap: 8
+  },
+  sprintItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: '#1E293B',
+    padding: 16,
+    borderRadius: 8
+  },
+  sprintItemTitle: {
     color: '#F8FAFC',
     fontSize: 16,
     fontWeight: '600'
   },
-  timerText: {
-    color: '#94A3B8',
-    fontSize: 16,
-    fontVariant: ['tabular-nums']
-  },
-  mainButton: {
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-    width: '100%'
-  },
-  startButton: {
-    backgroundColor: '#0284C7'
-  },
-  stopButton: {
-    backgroundColor: '#EF4444'
-  },
-  mainButtonText: {
-    color: '#FFFFFF',
+  sprintItemTime: {
+    color: '#38BDF8',
     fontSize: 16,
     fontWeight: 'bold'
   },
-  metricsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-    justifyContent: 'space-between'
-  },
-  spmCard: {
-    backgroundColor: '#0C4A6E',
-    borderRadius: 16,
-    padding: 16,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center'
-  },
-  spmTitle: { color: '#E0F2FE', fontSize: 16, fontWeight: '700' },
-  spmDetail: { color: '#7DD3FC', fontSize: 11, marginTop: 4, maxWidth: 190 },
-  spmValueRow: { flexDirection: 'row', alignItems: 'baseline', gap: 5 },
-  spmValue: { color: '#FFFFFF', fontSize: 36, fontWeight: '700', fontVariant: ['tabular-nums'] },
-  spmUnit: { color: '#BAE6FD', fontSize: 12, fontWeight: '600' },
-  metricTile: {
-    width: '48%',
-    backgroundColor: '#1E293B',
-    borderRadius: 16,
-    padding: 12,
-    minHeight: 110,
-    justifyContent: 'space-between'
-  },
-  metricTitleRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    width: '100%',
-  },
-  metricTitle: {
-    color: '#94A3B8',
-    fontSize: 12
-  },
-  originBadge: {
-    backgroundColor: '#334155',
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-    borderRadius: 4,
-  },
-  originBadgeText: {
-    color: '#38BDF8',
-    fontSize: 9,
-    fontWeight: '700',
-  },
-  metricValue: {
-    color: '#F8FAFC',
-    fontSize: 24,
-    fontWeight: '600',
-    fontVariant: ['tabular-nums']
-  },
-  metricUnit: {
-    color: '#64748B',
-    fontSize: 10
-  },
-  cardTitle: {
-    color: '#F8FAFC',
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 12
-  },
-  secondaryText: {
-    color: '#94A3B8',
-    fontSize: 14
-  },
-  tipContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#0F172A',
-    borderRadius: 8,
-    padding: 10,
-    marginTop: 12,
-    borderWidth: 1,
-    borderColor: '#334155'
-  },
-  tipIcon: {
-    fontSize: 16,
-    marginRight: 8
-  },
-  tipText: {
-    color: '#94A3B8',
-    fontSize: 12,
-    lineHeight: 16,
-  },
-  versionFooter: {
-    paddingVertical: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  versionFooterText: {
-    fontSize: 12,
-    color: '#64748B',
-    fontWeight: '500',
-  }
 });

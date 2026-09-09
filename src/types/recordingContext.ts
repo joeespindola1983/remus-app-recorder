@@ -31,6 +31,7 @@ export interface RecordingContext {
   notes: string;
   finalizedAt?: string;
   sessionTitle?: string | null;
+  sprints?: { targetDistance: number; durationSeconds: number; startedAt: string; }[];
 }
 
 export { catalog };
