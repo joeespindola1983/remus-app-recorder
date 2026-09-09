@@ -17,7 +17,7 @@ import { SessionManager } from '../services/sessionManager';
 import { telemetryBridge } from '../services/telemetryBridge';
 import { analyticsService } from '../services/analyticsService';
 import { RecordingContextForm } from './RecordingContextForm';
-import { normalizeTelemetryEvent } from '../contracts/telemetryContract';
+import { normalizeTelemetryEvent, resolveStrokeRateDisplay, StrokeRateDisplay } from '../contracts/telemetryContract';
 import { getRecordingState } from '../contracts/bridgeContract';
 import { APP_DISPLAY_VERSION } from '../version';
 
@@ -96,10 +96,12 @@ export const RecorderScreen: React.FC = () => {
 
   // A missing observation is not a measured zero.
   const [metrics, setMetrics] = useState<MetricsState>(INITIAL_METRICS);
+  const [lastAvailableSpm, setLastAvailableSpm] = useState<{value: number, timestamp: number} | null>(null);
 
   const resetScreenState = () => {
     setDuration(0);
     setMetrics(INITIAL_METRICS);
+    setLastAvailableSpm(null);
     setIsAcquiringGPS(false);
   };
 
@@ -139,7 +141,13 @@ export const RecorderScreen: React.FC = () => {
   useEffect(() => {
     if (!telemetryEmitter) return;
     const subscription = telemetryEmitter.addListener('onTelemetryUpdate', (data: Partial<MetricsState>) => {
-      setMetrics(prev => ({ ...prev, ...normalizeTelemetryEvent(data, prev) }));
+      setMetrics(prev => {
+        const normalized = normalizeTelemetryEvent(data, prev);
+        if (normalized.strokeRateStatus === 'available' && normalized.strokeRateSpm != null) {
+          setLastAvailableSpm({ value: normalized.strokeRateSpm, timestamp: Date.now() });
+        }
+        return { ...prev, ...normalized };
+      });
     });
     return () => {
       subscription.remove();
@@ -236,12 +244,17 @@ export const RecorderScreen: React.FC = () => {
     return `X ${vector.x.toFixed(2)} · Y ${vector.y.toFixed(2)} · Z ${vector.z.toFixed(2)}`;
   };
 
+  const spmDisplay = resolveStrokeRateDisplay(metrics, lastAvailableSpm, Date.now());
+
   const strokeRateDetail = () => {
     if (!isRecording) return t('recorder.spm.ready');
-    if (metrics.strokeRateStatus === 'available' && metrics.strokeRateSpm !== null) {
+    if (spmDisplay.status === 'available') {
       return t('recorder.spm.liveDetail');
     }
-    if (metrics.strokeRateStatus === 'unavailable') return t('recorder.spm.unavailable');
+    if (spmDisplay.status === 'stale') {
+      return t('recorder.spm.lastReading', { seconds: Math.floor(spmDisplay.staleSeconds) });
+    }
+    if (spmDisplay.status === 'unavailable') return t('recorder.spm.unavailable');
     const remaining = Math.max(0, Math.ceil(15 * (1 - (metrics.strokeRateProgress ?? Math.min(duration / 15, 1)))));
     return t('recorder.spm.collecting').replace('{{seconds}}', String(remaining));
   };
@@ -299,9 +312,9 @@ export const RecorderScreen: React.FC = () => {
             <Text style={styles.spmTitle}>{t('recorder.spm.title')}</Text>
             <Text style={styles.spmDetail}>{strokeRateDetail()}</Text>
           </View>
-          <View style={styles.spmValueRow}>
-            <Text style={styles.spmValue}>
-              {metrics.strokeRateStatus === 'available' && metrics.strokeRateSpm !== null ? metrics.strokeRateSpm.toFixed(1) : '—'}
+          <View style={[styles.spmValueRow, spmDisplay.status === 'stale' && { opacity: 0.5 }]}>
+            <Text style={[styles.spmValue, spmDisplay.status === 'stale' && { color: '#64748B' }]}>
+              {spmDisplay.value !== null ? spmDisplay.value.toFixed(1) : '—'}
             </Text>
             <Text style={styles.spmUnit}>SPM</Text>
           </View>

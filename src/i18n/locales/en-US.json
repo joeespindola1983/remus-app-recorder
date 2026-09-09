@@ -80,6 +80,7 @@
   "recorder.spm.ready": "Start recording to estimate stroke rate from this phone.",
   "recorder.spm.collecting": "Analyzing motion · about {{seconds}} s",
   "recorder.spm.liveDetail": "Phone estimate · updates every second",
+  "recorder.spm.lastReading": "Last reading · {{seconds}} s ago",
   "recorder.spm.unavailable": "No reliable periodicity right now",
   "context.step.progress": "Step {{current}} of {{total}}",
   "context.step.sportTitle": "What was today's workout?",

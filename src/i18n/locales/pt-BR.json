@@ -80,6 +80,7 @@
   "recorder.spm.ready": "Inicie uma gravação para estimar a voga deste celular.",
   "recorder.spm.collecting": "Analisando o movimento · cerca de {{seconds}} s",
   "recorder.spm.liveDetail": "Estimativa do celular · atualiza a cada segundo",
+  "recorder.spm.lastReading": "Última leitura · há {{seconds}} s",
   "recorder.spm.unavailable": "Sem periodicidade confiável neste momento",
   "context.step.progress": "Passo {{current}} de {{total}}",
   "context.step.sportTitle": "Qual foi o tipo de treino?",

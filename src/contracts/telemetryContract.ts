@@ -126,3 +126,32 @@ export function normalizeTelemetryEvent(
 
   return result;
 }
+
+export interface StrokeRateDisplay {
+  value: number | null;
+  status: 'available' | 'collecting' | 'stale' | 'unavailable';
+  staleSeconds: number;
+}
+
+export function resolveStrokeRateDisplay(
+  current: NormalizedTelemetry | Partial<NormalizedTelemetry>,
+  lastAvailable: { value: number; timestamp: number } | null,
+  now: number
+): StrokeRateDisplay {
+  if (current.strokeRateStatus === 'available' && current.strokeRateSpm != null) {
+    return { value: current.strokeRateSpm, status: 'available', staleSeconds: 0 };
+  }
+
+  if (lastAvailable != null) {
+    const staleSeconds = (now - lastAvailable.timestamp) / 1000.0;
+    if (staleSeconds <= 30) {
+      return { value: lastAvailable.value, status: 'stale', staleSeconds };
+    }
+  }
+
+  if (current.strokeRateStatus === 'collecting' && lastAvailable == null) {
+    return { value: null, status: 'collecting', staleSeconds: 0 };
+  }
+
+  return { value: null, status: 'unavailable', staleSeconds: 0 };
+}

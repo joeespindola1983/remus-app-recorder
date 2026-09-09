@@ -135,6 +135,7 @@ class RemusTelemetryModule(private val reactContext: ReactApplicationContext) :
     private var lastEmitTimeMillis: Long = 0
     private val liveSpmHandle = LiveSpmNative.create()
     private var liveSpmResult: DoubleArray? = null
+    private var currentSpmOrigin: String? = null
 
     override fun getName(): String = "RemusTelemetryModule"
 
@@ -195,6 +196,7 @@ class RemusTelemetryModule(private val reactContext: ReactApplicationContext) :
             lastEmitTimeMillis = 0
             LiveSpmNative.reset(liveSpmHandle)
             liveSpmResult = null
+            currentSpmOrigin = null
             lastCourseDegrees = null
             lastHeadingDegrees = null
             recentGpsTimestampsNanos.clear()
@@ -390,12 +392,28 @@ class RemusTelemetryModule(private val reactContext: ReactApplicationContext) :
                 }
                 lastPersistedMotionTimestampNanos = sensorUptimeNanos(event)
 
+                // Determine signal for SPM
+                val linearAccFresh = hasHardwareLinearAcc && lastLinearAccelerationTimestampNanos != null &&
+                    (event.timestamp - lastLinearAccelerationTimestampNanos!! < 5 * requestedMotionPeriodNanos)
+
+                val selectedOrigin = if (linearAccFresh) "phone_linear_acceleration" else "phone_raw_acceleration_fallback"
+
+                if (currentSpmOrigin != null && currentSpmOrigin != selectedOrigin) {
+                    LiveSpmNative.reset(liveSpmHandle)
+                    liveSpmResult = null // back to collecting
+                }
+                currentSpmOrigin = selectedOrigin
+
+                val spmAx = if (linearAccFresh) lastUserAx else lastRawAx
+                val spmAy = if (linearAccFresh) lastUserAy else lastRawAy
+                val spmAz = if (linearAccFresh) lastUserAz else lastRawAz
+
                 LiveSpmNative.push(
                     liveSpmHandle,
                     sensorUptime,
-                    lastUserAx * 9.80665,
-                    lastUserAy * 9.80665,
-                    lastUserAz * 9.80665
+                    spmAx * 9.80665,
+                    spmAy * 9.80665,
+                    spmAz * 9.80665
                 )?.let { liveSpmResult = it }
 
                 w.recordMotion(
@@ -454,7 +472,7 @@ class RemusTelemetryModule(private val reactContext: ReactApplicationContext) :
                         body.putDouble("strokeRateObservedHertz", estimate[4])
                         body.putDouble("strokeRateWindowSeconds", 15.0)
                         body.putString("strokeRateAlgorithmVersion", "live-vector-acf-0.1-experimental")
-                        body.putString("strokeRateOrigin", "phone_linear_acceleration")
+                        body.putString("strokeRateOrigin", currentSpmOrigin ?: "unknown")
                     }
 
                     if (lastGyroscopeTimestampNanos != null) {
