@@ -4,6 +4,7 @@ import Combine
 import CoreLocation
 import AudioToolbox
 import AVFoundation
+import WatchConnectivity
 
 @objc(RemusTelemetryModule)
 class RemusTelemetryModule: RCTEventEmitter {
@@ -125,7 +126,7 @@ class RemusTelemetryModule: RCTEventEmitter {
             let recorder = SensorRecorder()
             self.recorder = recorder
             
-            Task { @MainActor in
+            Task { @MainActor () -> Void in
                 WatchImportService.shared.onHeartRateReceived = { [weak self] hr in
                     self?.sendEvent(withName: "onTelemetryUpdate", body: ["heartRateBpm": hr, "watchActive": true])
                 }
