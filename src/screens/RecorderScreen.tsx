@@ -9,7 +9,7 @@ import {
   SafeAreaView,
   NativeEventEmitter,
   NativeModules,
-  PermissionsAndroid
+  useWindowDimensions,
 } from 'react-native';
 import { t } from '../i18n';
 import { SensorPlacement } from '../types/telemetry';
@@ -17,9 +17,8 @@ import { SessionManager } from '../services/sessionManager';
 import { telemetryBridge } from '../services/telemetryBridge';
 import { analyticsService } from '../services/analyticsService';
 import { RecordingContextForm } from './RecordingContextForm';
-import { normalizeTelemetryEvent, resolveStrokeRateDisplay, StrokeRateDisplay } from '../contracts/telemetryContract';
+import { normalizeTelemetryEvent, resolveStrokeRateDisplay } from '../contracts/telemetryContract';
 import { getRecordingState } from '../contracts/bridgeContract';
-import { APP_DISPLAY_VERSION } from '../version';
 
 const sessionManager = new SessionManager(telemetryBridge);
 const { RemusTelemetryModule } = NativeModules;
@@ -86,47 +85,66 @@ const INITIAL_METRICS: MetricsState = {
   strokeRateOrigin: null
 };
 
+export interface RecorderScreenProps {
+  onRecordingChange?: (isRecording: boolean) => void;
+}
 
-
-export const RecorderScreen: React.FC = () => {
+export const RecorderScreen: React.FC<RecorderScreenProps> = ({ onRecordingChange }) => {
   const [isRecording, setIsRecording] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
 
   const [activeTab, setActiveTab] = useState<'treino' | 'sprints' | 'sensores'>('treino');
   const [completedSprints, setCompletedSprints] = useState<{ targetDistance: number; durationSeconds: number; startedAt: string; }[]>([]);
   const [activeSprint, setActiveSprint] = useState<{ target: number; startDistance: number; startTime: number } | null>(null);
-  const [sprintPending, setSprintPending] = useState<number | null>(null); // pending sprint target
   const [sprintCountdown, setSprintCountdown] = useState<number | null>(null);
+  const [sprintTarget, setSprintTarget] = useState<number | null>(null);
 
-  const [isAcquiringGPS, setIsAcquiringGPS] = useState(false);
+  useEffect(() => {
+    onRecordingChange?.(isRecording);
+    if (isRecording) {
+      setActiveTab('treino');
+    }
+  }, [isRecording, onRecordingChange]);
+
+  const [sprintMenuOpen, setSprintMenuOpen] = useState(false);
+
   const [duration, setDuration] = useState(0);
   const [placement] = useState<SensorPlacement>('unknown');
   const [pendingRecordingId, setPendingRecordingId] = useState<string | null>(null);
   const [transitioning, setTransitioning] = useState(false);
 
-  // A missing observation is not a measured zero.
+  // Telemetry metrics & sensor observers
   const [metrics, setMetrics] = useState<MetricsState>(INITIAL_METRICS);
+  const [lastHeartRate, setLastHeartRate] = useState<{value: number, timestamp: number} | null>(null);
   const [lastAvailableSpm, setLastAvailableSpm] = useState<{value: number, timestamp: number} | null>(null);
 
   const resetScreenState = () => {
     setDuration(0);
     setMetrics(INITIAL_METRICS);
+    setLastHeartRate(null);
     setLastAvailableSpm(null);
-    setIsAcquiringGPS(false);
+    setSprintMenuOpen(false);
+    setSprintCountdown(null);
+    setSprintTarget(null);
+    setActiveSprint(null);
   };
 
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null;
-    if (isRecording) {
+    if (isRecording && !isPaused) {
       interval = setInterval(() => {
         setDuration((prev) => prev + 1);
       }, 1000);
-    } else {
+    } else if (!isRecording) {
       setDuration(0);
     }
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isRecording]);
+  }, [isRecording, isPaused]);
 
   useEffect(() => {
     let mounted = true;
@@ -155,6 +173,9 @@ export const RecorderScreen: React.FC = () => {
         if (normalized.strokeRateStatus === 'available' && normalized.strokeRateSpm != null) {
           setLastAvailableSpm({ value: normalized.strokeRateSpm, timestamp: Date.now() });
         }
+        if (data.heartRateBpm !== undefined && data.heartRateBpm !== null) {
+          setLastHeartRate({ value: data.heartRateBpm as number, timestamp: Date.now() });
+        }
         return { ...prev, ...normalized };
       });
     });
@@ -167,24 +188,13 @@ export const RecorderScreen: React.FC = () => {
     telemetryBridge.requestPermissions().catch(console.warn);
   }, []);
 
-  
-  useEffect(() => {
-    if (isRecording && mode !== 'free' && targetDistance != null) {
-      if (metrics.distanceMeters != null && metrics.distanceMeters >= targetDistance) {
-        telemetryBridge.playBeep(true);
-        handleStop();
-      }
-    }
-  }, [isRecording, metrics.distanceMeters, mode, targetDistance]);
-
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  
-  
+  // Sprint completion watcher
   useEffect(() => {
     if (activeSprint && metrics.distanceMeters != null) {
       const dist = metrics.distanceMeters - activeSprint.startDistance;
@@ -201,46 +211,42 @@ export const RecorderScreen: React.FC = () => {
     }
   }, [metrics.distanceMeters, activeSprint]);
 
-  const isGpsReady = metrics.horizontalAccuracyMeters != null && metrics.horizontalAccuracyMeters <= 5;
-  const isBoatStopped = metrics.groundSpeedMetersPerSecond != null && metrics.groundSpeedMetersPerSecond < 0.3;
-  const isReadyToSprint = isGpsReady && isBoatStopped;
-
-  useEffect(() => {
-    if (sprintPending && isReadyToSprint && sprintCountdown === null) {
-      let timeLeft = 10;
-      setSprintCountdown(timeLeft);
-      
-      const interval = setInterval(async () => {
-        timeLeft -= 1;
-        if (timeLeft > 0 && timeLeft <= 3) {
-          await telemetryBridge.playBeep(false);
-        }
-        
-        if (timeLeft <= 0) {
-          clearInterval(interval);
-          setSprintCountdown(null);
-          await telemetryBridge.playBeep(true);
-          
-          setActiveSprint({
-            target: sprintPending,
-            startDistance: metrics.distanceMeters || 0,
-            startTime: Date.now()
-          });
-          setSprintPending(null);
-        } else {
-          setSprintCountdown(timeLeft);
-        }
-      }, 1000);
-      
-      return () => clearInterval(interval);
-    }
-  }, [sprintPending, isReadyToSprint, sprintCountdown]);
+  const initiateSprint = (targetMeters: number) => {
+    setSprintMenuOpen(false);
+    setSprintTarget(targetMeters);
+    setSprintCountdown(10);
+  };
 
   const cancelSprint = () => {
-    setSprintPending(null);
     setSprintCountdown(null);
+    setSprintTarget(null);
     setActiveSprint(null);
   };
+
+  useEffect(() => {
+    if (sprintCountdown === null) return;
+
+    if (sprintCountdown === 0) {
+      telemetryBridge.playBeep(true).catch(console.warn);
+      setActiveSprint({
+        target: sprintTarget || 250,
+        startDistance: metrics.distanceMeters || 0,
+        startTime: Date.now()
+      });
+      setSprintCountdown(null);
+      return;
+    }
+
+    if (sprintCountdown <= 3) {
+      telemetryBridge.playBeep(false).catch(console.warn);
+    }
+
+    const timer = setTimeout(() => {
+      setSprintCountdown(prev => (prev !== null ? prev - 1 : null));
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [sprintCountdown, sprintTarget]);
 
   const handleStart = async () => {
     if (transitioning) return;
@@ -256,6 +262,8 @@ export const RecorderScreen: React.FC = () => {
         notes: ''
       });
       setIsRecording(true);
+      setIsPaused(false);
+      setSprintMenuOpen(false);
       setDuration(0);
       setMetrics(prev => ({...prev, strokeRateSpm: null, strokeRateStatus: 'collecting', strokeRateProgress: 0}));
       await analyticsService.logRecordingStarted({
@@ -276,6 +284,8 @@ export const RecorderScreen: React.FC = () => {
     try {
       const manifest = await sessionManager.stop();
       setIsRecording(false);
+      setIsPaused(false);
+      setSprintMenuOpen(false);
       setPendingRecordingId(manifest.id);
       await analyticsService.logRecordingStopped({
         sessionId: manifest.id,
@@ -322,28 +332,30 @@ export const RecorderScreen: React.FC = () => {
     return `X ${vector.x.toFixed(2)} · Y ${vector.y.toFixed(2)} · Z ${vector.z.toFixed(2)}`;
   };
 
+  const isHeartRateStale = !lastHeartRate || (Date.now() - lastHeartRate.timestamp > 7000);
+  const heartRateValue = lastHeartRate && !isHeartRateStale ? Math.round(lastHeartRate.value).toString() : '—';
+  const hrColor = isHeartRateStale ? '#94A3B8' : '#EF4444';
+  const hrIcon = isHeartRateStale ? '♡' : '♥';
+
   const spmDisplay = resolveStrokeRateDisplay(metrics, lastAvailableSpm, Date.now());
-
-  const strokeRateDetail = () => {
-    if (!isRecording) return t('recorder.spm.ready');
-    if (spmDisplay.status === 'available') {
-      return t('recorder.spm.liveDetail');
-    }
-    if (spmDisplay.status === 'stale') {
-      return t('recorder.spm.lastReading', { seconds: Math.floor(spmDisplay.staleSeconds) });
-    }
-    if (spmDisplay.status === 'unavailable') return t('recorder.spm.unavailable');
-    const remaining = Math.max(0, Math.ceil(15 * (1 - (metrics.strokeRateProgress ?? Math.min(duration / 15, 1)))));
-    return t('recorder.spm.collecting').replace('{{seconds}}', String(remaining));
-  };
-
 
   const pace = metrics.groundSpeedMetersPerSecond && metrics.groundSpeedMetersPerSecond > 0 
     ? 500 / metrics.groundSpeedMetersPerSecond 
     : 0;
 
+  // Sprint metrics: time and distance reducing to 0m
+  const sprintElapsed = activeSprint 
+    ? Math.max(0, Math.floor((Date.now() - activeSprint.startTime) / 1000))
+    : 0;
+  const sprintTraveled = activeSprint
+    ? Math.max(0, (metrics.distanceMeters || 0) - activeSprint.startDistance)
+    : 0;
+  const sprintRemaining = activeSprint
+    ? Math.max(0, activeSprint.target - sprintTraveled)
+    : 0;
+
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={[styles.safeArea, isRecording && styles.safeAreaRecording]}>
       {pendingRecordingId && (
         <RecordingContextForm 
           recordingId={pendingRecordingId} 
@@ -355,258 +367,826 @@ export const RecorderScreen: React.FC = () => {
         />
       )}
 
-      {/* Global Header */}
-      <View style={styles.globalHeader}>
-        <View style={styles.headerRow}>
-          <View style={styles.statusRow}>
-            <View style={[styles.dot, { backgroundColor: isRecording ? '#EF4444' : '#64748B' }]} />
-            <Text style={styles.statusText}>
-              {isRecording ? t('recorder.status.recording') : (isAcquiringGPS ? t('recorder.status.acquiringGps') : t('recorder.status.ready'))}
-            </Text>
-          </View>
-          {isRecording && (
-            <Text style={styles.timerText}>{formatDuration(duration)}</Text>
+      {/* Sprint Speed Dial Fullscreen Backdrop */}
+      {sprintMenuOpen && (
+        <TouchableOpacity 
+          style={styles.backdrop} 
+          activeOpacity={1} 
+          onPress={() => setSprintMenuOpen(false)} 
+        />
+      )}
+
+      <View style={[styles.screenWrapper, isLandscape && styles.screenWrapperLandscape]}>
+        {/* Main View Area */}
+        <View style={[
+          styles.contentArea, 
+          isRecording && styles.contentAreaRecording,
+          isLandscape && styles.contentAreaLandscape
+        ]}>
+          {!isRecording ? (
+            /* IDLE SCREEN: Big Start Button centered without static data view */
+            <View style={styles.idleStartContainer}>
+              <View style={styles.idleContent}>
+                <View style={styles.idleIconBadge}>
+                  <Text style={styles.idleRowingIcon}>🚣</Text>
+                </View>
+                <Text style={styles.idleTitle}>{t('app.title')}</Text>
+                <Text style={styles.idleSubtitle}>{t('recording.status.idle')}</Text>
+
+                <TouchableOpacity
+                  style={styles.bigStartButton}
+                  onPress={handleStart}
+                  disabled={transitioning}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.bigStartIcon}>▶</Text>
+                  <Text style={styles.bigStartText}>{t('recording.start')}</Text>
+                </TouchableOpacity>
+
+                <Text style={styles.idleTip}>{t('recording.screenOffTip')}</Text>
+              </View>
+            </View>
+          ) : (
+            /* SPEEDCOACH UNIFIED SINGLE-SCREEN (Only shown when recording) */
+            <View style={[styles.speedCoachContainer, styles.speedCoachContainerRecording]}>
+              {/* SpeedCoach Top Bezel Bar */}
+              <View style={styles.scHeader}>
+                <Text style={styles.scTime}>
+                  {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </Text>
+                <Text style={[
+                  styles.scStatusText, 
+                  activeSprint ? styles.scStatusSprint : (sprintCountdown !== null ? styles.scStatusCountdown : (isPaused ? styles.scStatusPaused : styles.scStatusRecording))
+                ]}>
+                  {activeSprint 
+                    ? `⚡ TIRO ${activeSprint.target}M` 
+                    : sprintCountdown !== null 
+                      ? `⚡ PREPARAR ${sprintTarget}M` 
+                      : (isPaused ? 'PAUSADO' : '● GRAVANDO')}
+                </Text>
+                <Text style={styles.scIcons}>
+                  <Text style={{ color: hrColor }}>{hrIcon} {heartRateValue}</Text>  GPS 🔋
+                </Text>
+              </View>
+
+              {/* Countdown Overlay when preparing sprint */}
+              {sprintCountdown !== null && (
+                <View style={styles.countdownOverlay}>
+                  <Text style={styles.countdownPrompt}>LARGADA EM</Text>
+                  <Text style={[
+                    styles.countdownNumber,
+                    sprintCountdown <= 3 && styles.countdownNumberUrgent
+                  ]}>
+                    {sprintCountdown}
+                  </Text>
+                  <Text style={styles.countdownTarget}>Tiro de {sprintTarget}m</Text>
+                </View>
+              )}
+
+              {/* SpeedCoach 4 Quadrants (Background changes during sprint or pause) */}
+              <View style={styles.scRow}>
+                {/* Top Left: Stroke Rate (SPM) */}
+                <View style={[
+                  styles.scQuadrant, 
+                  styles.scBorderRight, 
+                  styles.scBorderBottom,
+                  activeSprint && styles.scQuadrantSprint,
+                  activeSprint && styles.scBorderRightSprint,
+                  activeSprint && styles.scBorderBottomSprint,
+                  isPaused && styles.scQuadrantPaused,
+                  isPaused && styles.scBorderRightPaused,
+                  isPaused && styles.scBorderBottomPaused,
+                ]}>
+                  <Text style={[
+                    styles.scValueBig,
+                    activeSprint && styles.scValueBigSprint,
+                    isPaused && styles.scValueBigPaused,
+                  ]} adjustsFontSizeToFit numberOfLines={1}>
+                    {spmDisplay.value !== null ? spmDisplay.value.toFixed(0) : '0'}
+                  </Text>
+                  <Text style={[
+                    styles.scLabel, 
+                    activeSprint && styles.scLabelSprint,
+                    isPaused && styles.scLabelPaused,
+                  ]}>SPM</Text>
+                </View>
+
+                {/* Top Right: 500m Split */}
+                <View style={[
+                  styles.scQuadrant, 
+                  styles.scBorderBottom,
+                  activeSprint && styles.scQuadrantSprint,
+                  activeSprint && styles.scBorderBottomSprint,
+                  isPaused && styles.scQuadrantPaused,
+                  isPaused && styles.scBorderBottomPaused,
+                ]}>
+                  <Text style={[
+                    styles.scValueBig,
+                    activeSprint && styles.scValueBigSprint,
+                    isPaused && styles.scValueBigPaused,
+                  ]} adjustsFontSizeToFit numberOfLines={1}>
+                    {pace > 0 ? formatDuration(Math.floor(pace)) : '0:00'}
+                  </Text>
+                  <Text style={[
+                    styles.scLabel, 
+                    activeSprint && styles.scLabelSprint,
+                    isPaused && styles.scLabelPaused,
+                  ]}>/500M</Text>
+                </View>
+              </View>
+
+              <View style={styles.scRow}>
+                {/* Bottom Left: TIME (Workout Duration or Sprint Duration) */}
+                <View style={[
+                  styles.scQuadrant, 
+                  styles.scBorderRight,
+                  activeSprint && styles.scQuadrantSprint,
+                  activeSprint && styles.scBorderRightSprint,
+                  isPaused && styles.scQuadrantPaused,
+                  isPaused && styles.scBorderRightPaused,
+                ]}>
+                  <Text style={[
+                    styles.scValueBig,
+                    activeSprint && styles.scValueBigSprint,
+                    isPaused && styles.scValueBigPaused,
+                  ]} adjustsFontSizeToFit numberOfLines={1}>
+                    {activeSprint 
+                      ? formatDuration(sprintElapsed) 
+                      : (sprintCountdown !== null ? '00:00' : formatDuration(duration))}
+                  </Text>
+                  <Text style={[
+                    styles.scLabel, 
+                    activeSprint && styles.scLabelSprint,
+                    isPaused && styles.scLabelPaused,
+                  ]}>
+                    {activeSprint ? 'TEMPO TIRO' : (sprintCountdown !== null ? 'PREPARAR' : 'TIME')}
+                  </Text>
+                </View>
+
+                {/* Bottom Right: DISTANCE (Reducing toward 0m on sprint) */}
+                <View style={[
+                  styles.scQuadrant,
+                  activeSprint && styles.scQuadrantSprint,
+                  isPaused && styles.scQuadrantPaused,
+                ]}>
+                  <Text style={[
+                    styles.scValueBig,
+                    activeSprint && styles.scValueBigSprint,
+                    isPaused && styles.scValueBigPaused,
+                  ]} adjustsFontSizeToFit numberOfLines={1}>
+                    {activeSprint 
+                      ? sprintRemaining.toFixed(0) 
+                      : (sprintCountdown !== null ? String(sprintTarget ?? 0) : (metrics.distanceMeters?.toFixed(0) ?? '0'))}
+                  </Text>
+                  <Text style={[
+                    styles.scLabel, 
+                    activeSprint && styles.scLabelSprint,
+                    isPaused && styles.scLabelPaused,
+                  ]}>
+                    {activeSprint ? 'METROS REST.' : (sprintCountdown !== null ? 'ALVO (M)' : 'METERS')}
+                  </Text>
+                </View>
+              </View>
+            </View>
           )}
         </View>
 
-        <TouchableOpacity
-          style={[styles.mainButton, isRecording ? styles.stopButton : styles.startButton]}
-          onPress={isRecording ? handleStop : handleStart}
-          disabled={transitioning || sprintPending !== null || activeSprint !== null}
-        >
-          <Text style={styles.mainButtonText}>
-            {isRecording ? t('recording.stop') : t('recording.start')}
-          </Text>
-        </TouchableOpacity>
-      </View>
+        {/* Controls Container with FABs (only when recording) */}
+        {isRecording && (
+          <View 
+            style={[
+              styles.bottomControlsContainer,
+              isLandscape && styles.sideControlsContainerLandscape
+            ]}
+          >
+            <View style={[
+              styles.fabsRowRight,
+              isLandscape && styles.fabsColumnLandscape
+            ]}>
+              {/* Sprint FAB (Verde) - or Cancel if active/countdown */}
+              <View style={styles.fabItem}>
+                {/* Sprint Speed Dial Options: 500m, 250m, 100m */}
+                {sprintMenuOpen && (
+                  <View style={[
+                    styles.sprintSpeedDial,
+                    isLandscape && styles.sprintSpeedDialLandscape
+                  ]}>
+                    <TouchableOpacity
+                      style={styles.sprintOptionFab}
+                      onPress={() => initiateSprint(500)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.sprintOptionDistance}>500m</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.sprintOptionFab}
+                      onPress={() => initiateSprint(250)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.sprintOptionDistance}>250m</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.sprintOptionFab}
+                      onPress={() => initiateSprint(100)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.sprintOptionDistance}>100m</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
 
-      {/* Tabs */}
-      {isRecording && (
-        <View style={styles.tabsRow}>
-          <TouchableOpacity style={[styles.tabBtn, activeTab === 'treino' && styles.tabBtnActive]} onPress={() => setActiveTab('treino')}>
-            <Text style={[styles.tabText, activeTab === 'treino' && styles.tabTextActive]}>Treino</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.tabBtn, activeTab === 'sprints' && styles.tabBtnActive]} onPress={() => setActiveTab('sprints')}>
-            <Text style={[styles.tabText, activeTab === 'sprints' && styles.tabTextActive]}>Sprints</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.tabBtn, activeTab === 'sensores' && styles.tabBtnActive]} onPress={() => setActiveTab('sensores')}>
-            <Text style={[styles.tabText, activeTab === 'sensores' && styles.tabTextActive]}>Sensores</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
-      <ScrollView contentContainerStyle={styles.container}>
-        {!isRecording ? (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyText}>Pressione GRAVAR para iniciar.</Text>
-          </View>
-        ) : activeTab === 'treino' ? (
-          <View style={styles.treinoTab}>
-            
-            <View style={styles.spmCard}>
-              <View>
-                <Text style={styles.spmTitle}>{t('recorder.spm.title')}</Text>
-                <Text style={styles.spmDetail}>{strokeRateDetail()}</Text>
-              </View>
-              <View style={[styles.spmValueRow, spmDisplay.status === 'stale' && { opacity: 0.5 }]}>
-                <Text style={[styles.spmValue, spmDisplay.status === 'stale' && { color: '#64748B' }]}>
-                  {spmDisplay.value !== null ? spmDisplay.value.toFixed(1) : '—'}
-                </Text>
-                <Text style={styles.spmUnit}>SPM</Text>
-              </View>
-            </View>
-
-            <View style={styles.metricsGrid}>
-              {renderMetricTile('Pace (500m)', pace > 0 ? formatDuration(Math.floor(pace)) : '—', 'min:sec')}
-              {renderMetricTile('Distância Total', metrics.distanceMeters?.toFixed(0) ?? '—', 'm')}
-            </View>
-
-            {/* Sprints Block */}
-            <View style={styles.sprintControls}>
-              <Text style={styles.cardTitle}>Tiros (Sprints)</Text>
-              
-              {activeSprint ? (
-                <View style={styles.activeSprintBox}>
-                  <Text style={styles.sprintTitle}>Tiro de {activeSprint.target}m em andamento</Text>
-                  <Text style={styles.sprintDistanceText}>
-                    {((metrics.distanceMeters || 0) - activeSprint.startDistance).toFixed(0)}m percorridos
+                <TouchableOpacity
+                  style={[
+                    styles.fabCircle, 
+                    (activeSprint || sprintCountdown !== null) ? styles.cancelSprintFab : styles.sprintFabGreen, 
+                    sprintMenuOpen && styles.sprintFabActive,
+                    transitioning && styles.fabDisabled
+                  ]}
+                  onPress={() => {
+                    if (activeSprint || sprintCountdown !== null) {
+                      cancelSprint();
+                    } else {
+                      setSprintMenuOpen(prev => !prev);
+                    }
+                  }}
+                  disabled={transitioning}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.fabIcon}>
+                    {(activeSprint || sprintCountdown !== null) ? '✕' : (sprintMenuOpen ? '✕' : '⚡')}
                   </Text>
-                  <TouchableOpacity style={styles.cancelSprintBtn} onPress={cancelSprint}>
-                    <Text style={styles.cancelSprintText}>Cancelar Tiro</Text>
-                  </TouchableOpacity>
-                </View>
-              ) : sprintPending ? (
-                <View style={styles.pendingSprintBox}>
-                  {sprintCountdown !== null ? (
-                    <Text style={styles.countdownBig}>{sprintCountdown}</Text>
-                  ) : !isGpsReady ? (
-                    <Text style={styles.warningText}>Aguardando GPS...</Text>
-                  ) : !isBoatStopped ? (
-                    <Text style={styles.warningText}>Aguarde o barco parar...</Text>
-                  ) : (
-                    <Text style={styles.readyText}>Pronto...</Text>
-                  )}
-                  <TouchableOpacity style={styles.cancelSprintBtn} onPress={cancelSprint}>
-                    <Text style={styles.cancelSprintText}>Cancelar</Text>
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                <View style={styles.sprintButtonsRow}>
-                  <TouchableOpacity style={styles.sprintBtn} onPress={() => setSprintPending(250)}><Text style={styles.sprintBtnText}>250m</Text></TouchableOpacity>
-                  <TouchableOpacity style={styles.sprintBtn} onPress={() => setSprintPending(500)}><Text style={styles.sprintBtnText}>500m</Text></TouchableOpacity>
-                  <TouchableOpacity style={styles.sprintBtn} onPress={() => setSprintPending(1000)}><Text style={styles.sprintBtnText}>1000m</Text></TouchableOpacity>
-                </View>
-              )}
+                </TouchableOpacity>
+                <Text style={styles.fabText}>
+                  {(activeSprint || sprintCountdown !== null) ? t('common.cancel') : t('recording.sprint')}
+                </Text>
+              </View>
+
+              {/* Pause / Resume FAB (Azul Claro) */}
+              <View style={styles.fabItem}>
+                <TouchableOpacity
+                  style={[
+                    styles.fabCircle, 
+                    styles.pauseFabLightBlue,
+                    transitioning && styles.fabDisabled
+                  ]}
+                  onPress={() => {
+                    setSprintMenuOpen(false);
+                    setIsPaused(prev => !prev);
+                  }}
+                  disabled={transitioning}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.fabIconPause}>{isPaused ? '▶' : '⏸'}</Text>
+                </TouchableOpacity>
+                <Text style={styles.fabText}>{isPaused ? t('recording.resume') : t('recording.pause')}</Text>
+              </View>
+
+              {/* Stop FAB (Vermelho) */}
+              <View style={styles.fabItem}>
+                <TouchableOpacity
+                  style={[
+                    styles.fabCircle, 
+                    styles.stopFabRed,
+                    transitioning && styles.fabDisabled
+                  ]}
+                  onPress={() => {
+                    setSprintMenuOpen(false);
+                    handleStop();
+                  }}
+                  disabled={transitioning}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.fabIconStop}>⏹</Text>
+                </TouchableOpacity>
+                <Text style={styles.fabText}>{t('recording.stop')}</Text>
+              </View>
             </View>
-          </View>
-        ) : activeTab === 'sprints' ? (
-          <View style={styles.sprintsList}>
-            {completedSprints.length === 0 ? (
-              <Text style={styles.emptyText}>Nenhum tiro registrado neste treino.</Text>
-            ) : (
-              completedSprints.map((s, i) => (
-                <View key={i} style={styles.sprintItem}>
-                  <Text style={styles.sprintItemTitle}>Tiro {s.targetDistance}m</Text>
-                  <Text style={styles.sprintItemTime}>{formatDuration(Math.floor(s.durationSeconds))}</Text>
-                </View>
-              ))
-            )}
-          </View>
-        ) : (
-          <View style={styles.metricsGrid}>
-            {renderMetricTile('Speed', metrics.groundSpeedMetersPerSecond === null ? '—' : (metrics.groundSpeedMetersPerSecond * 3.6).toFixed(1), 'km/h', originBadge(metrics.speedOrigin))}
-            {renderMetricTile('Course', metrics.courseDegrees === null ? '—' : `${metrics.courseDegrees.toFixed(0)}°`, 'movement', originBadge(metrics.courseOrigin))}
-            {renderMetricTile('Heading', metrics.headingDegrees === null ? '—' : `${metrics.headingDegrees.toFixed(0)}°`, 'phone')}
-            {renderMetricTile('Acceleration', metrics.accelerationG?.toFixed(3) ?? '—', 'g')}
-            {renderMetricTile('Rotation (X/Y/Z)', rotationValue(), 'rad/s')}
-            {renderMetricTile('GPS accuracy', metrics.horizontalAccuracyMeters !== null ? metrics.horizontalAccuracyMeters.toFixed(0) : '—', 'm')}
-            {renderMetricTile('GPS rate', metrics.samplingRateHertz?.toFixed(2) ?? '—', 'Hz')}
-            {renderMetricTile('IMU samples', metrics.imuSamples?.toString() ?? '—', '100 Hz')}
           </View>
         )}
-      </ScrollView>
+      </View>
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
-  globalHeader: {
-    padding: 16,
+  safeArea: {
+    flex: 1,
     backgroundColor: '#0F172A',
-    borderBottomWidth: 1,
-    borderBottomColor: '#334155'
   },
+  safeAreaRecording: {
+    backgroundColor: '#000000',
+  },
+  screenWrapper: {
+    flex: 1,
+  },
+  screenWrapperLandscape: {
+    flexDirection: 'row',
+  },
+  contentArea: {
+    flex: 1,
+    padding: 12,
+  },
+  contentAreaRecording: {
+    padding: 0,
+  },
+  contentAreaLandscape: {
+    flex: 1,
+  },
+  scrollContainer: {
+    paddingBottom: 24,
+  },
+
+  /* SPEEDCOACH UNIFIED CONTAINER */
+  speedCoachContainer: {
+    flex: 1,
+    backgroundColor: '#000000',
+    borderRadius: 20,
+    borderWidth: 12,
+    borderColor: '#84CC16',
+    overflow: 'hidden',
+  },
+  speedCoachContainerRecording: {
+    borderRadius: 0,
+    borderWidth: 0,
+  },
+  scHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: '#000000',
+  },
+  scTime: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+    fontVariant: ['tabular-nums'],
+  },
+  scStatusText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#94A3B8',
+    letterSpacing: 0.5,
+  },
+  scStatusRecording: {
+    color: '#38BDF8',
+  },
+  scStatusPaused: {
+    color: '#F59E0B',
+  },
+  scStatusSprint: {
+    color: '#4ADE80',
+  },
+  scStatusCountdown: {
+    color: '#F59E0B',
+  },
+  /* Sprint vibrant green theme for quadrants */
+  scQuadrantSprint: {
+    backgroundColor: '#16A34A',
+  },
+  scBorderRightSprint: {
+    borderRightColor: '#14532D',
+  },
+  scBorderBottomSprint: {
+    borderBottomColor: '#14532D',
+  },
+  scValueBigSprint: {
+    color: '#FFFFFF',
+  },
+  scLabelSprint: {
+    color: '#DCFCE7',
+  },
+  /* Countdown Overlay */
+  countdownOverlay: {
+    position: 'absolute',
+    top: 40,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.94)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 25,
+  },
+  countdownPrompt: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#F8FAFC',
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+  },
+  countdownNumber: {
+    fontSize: 96,
+    fontWeight: '900',
+    color: '#22C55E',
+    fontVariant: ['tabular-nums'],
+    marginVertical: 4,
+  },
+  countdownNumberUrgent: {
+    color: '#F59E0B',
+    transform: [{ scale: 1.15 }],
+  },
+  countdownTarget: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#F8FAFC',
+  },
+  scIcons: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+  },
+  scRow: {
+    flex: 1,
+    flexDirection: 'row',
+  },
+  scQuadrant: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
+  },
+  scBorderRight: {
+    borderRightWidth: 2,
+    borderRightColor: '#000000',
+  },
+  scBorderBottom: {
+    borderBottomWidth: 2,
+    borderBottomColor: '#000000',
+  },
+  scValueBig: {
+    fontSize: 54,
+    fontWeight: '900',
+    color: '#000000',
+    fontVariant: ['tabular-nums'],
+    letterSpacing: -2,
+    lineHeight: 60,
+  },
+  scLabel: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#000000',
+    position: 'absolute',
+    bottom: 6,
+    right: 8,
+  },
+  scQuadrantPaused: {
+    backgroundColor: '#94A3B8',
+  },
+  scBorderRightPaused: {
+    borderRightColor: '#64748B',
+  },
+  scBorderBottomPaused: {
+    borderBottomColor: '#64748B',
+  },
+  scValueBigPaused: {
+    color: '#0F172A',
+  },
+  scLabelPaused: {
+    color: '#1E293B',
+  },
+
+  /* Idle Start Screen */
+  idleStartContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  idleContent: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    maxWidth: 360,
+  },
+  idleIconBadge: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#1E293B',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  idleRowingIcon: {
+    fontSize: 40,
+  },
+  idleTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#F8FAFC',
+    textAlign: 'center',
+    marginBottom: 6,
+  },
+  idleSubtitle: {
+    fontSize: 14,
+    color: '#94A3B8',
+    textAlign: 'center',
+    marginBottom: 32,
+  },
+  bigStartButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#16A34A',
+    borderColor: '#4ADE80',
+    borderWidth: 2,
+    borderRadius: 36,
+    paddingVertical: 18,
+    paddingHorizontal: 36,
+    shadowColor: '#22C55E',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.45,
+    shadowRadius: 10,
+    elevation: 8,
+    minWidth: 260,
+  },
+  bigStartIcon: {
+    fontSize: 22,
+    color: '#FFFFFF',
+    marginRight: 12,
+  },
+  bigStartText: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.5,
+  },
+  idleTip: {
+    marginTop: 36,
+    fontSize: 13,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 18,
+    paddingHorizontal: 16,
+  },
+
+  /* Bottom Controls Container */
+  bottomControlsContainer: {
+    backgroundColor: '#0F172A',
+    borderTopWidth: 1,
+    borderTopColor: '#334155',
+  },
+  bottomControlsRecording: {
+    backgroundColor: '#000000',
+    borderTopColor: '#1E293B',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  sideControlsContainerLandscape: {
+    backgroundColor: '#000000',
+    borderLeftWidth: 1,
+    borderLeftColor: '#1E293B',
+    borderTopWidth: 0,
+    width: 80,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 6,
+  },
+  fabsRowRight: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 14,
+  },
+  fabsColumnLandscape: {
+    flexDirection: 'column',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 16,
+  },
+  fabItem: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 56,
+    position: 'relative',
+  },
+  fabCircle: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+
+  /* Colors: Sprint (Verde), Stop (Vermelho), Pause (Azul Claro) */
+  sprintFabGreen: {
+    backgroundColor: '#16A34A',
+    borderColor: '#4ADE80',
+    borderWidth: 2,
+    shadowColor: '#16A34A',
+  },
+  sprintFabActive: {
+    backgroundColor: '#15803D',
+    borderColor: '#86EFAC',
+    borderWidth: 3,
+  },
+  cancelSprintFab: {
+    backgroundColor: '#EF4444',
+    borderColor: '#FCA5A5',
+    borderWidth: 2,
+    shadowColor: '#EF4444',
+  },
+  stopFabRed: {
+    backgroundColor: '#EF4444',
+    borderColor: '#F87171',
+    borderWidth: 2,
+    shadowColor: '#EF4444',
+  },
+  pauseFabLightBlue: {
+    backgroundColor: '#0284C7',
+    borderColor: '#38BDF8',
+    borderWidth: 2,
+    shadowColor: '#0284C7',
+  },
+
+  fabDisabled: {
+    opacity: 0.4,
+  },
+  fabIcon: {
+    fontSize: 20,
+    color: '#FFFFFF',
+  },
+  fabIconStop: {
+    fontSize: 18,
+    color: '#FFFFFF',
+  },
+  fabIconPause: {
+    fontSize: 20,
+    color: '#FFFFFF',
+  },
+  fabText: {
+    color: '#94A3B8',
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 4,
+  },
+
+  /* Sprint Speed Dial */
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    zIndex: 40,
+  },
+  sprintSpeedDial: {
+    position: 'absolute',
+    bottom: 64,
+    alignSelf: 'center',
+    alignItems: 'center',
+    gap: 8,
+    zIndex: 60,
+  },
+  sprintSpeedDialLandscape: {
+    position: 'absolute',
+    right: 58,
+    top: 2,
+    bottom: undefined,
+    alignSelf: undefined,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    zIndex: 60,
+  },
+  sprintOptionFab: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#1E293B',
+    borderWidth: 2,
+    borderColor: '#4ADE80',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.4,
+    shadowRadius: 5,
+    elevation: 6,
+  },
+  sprintOptionDistance: {
+    color: '#4ADE80',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+
+  /* Bottom Tab Bar */
   tabsRow: {
     flexDirection: 'row',
     backgroundColor: '#1E293B',
-    borderBottomWidth: 1,
-    borderBottomColor: '#334155'
+    borderTopWidth: 1,
+    borderTopColor: '#334155',
   },
   tabBtn: {
     flex: 1,
     paddingVertical: 12,
-    alignItems: 'center'
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   tabBtnActive: {
-    borderBottomWidth: 2,
-    borderBottomColor: '#38BDF8'
+    borderBottomWidth: 3,
+    borderBottomColor: '#38BDF8',
+    backgroundColor: 'rgba(56, 189, 248, 0.08)',
   },
   tabText: {
-    color: '#64748B',
-    fontWeight: '600'
+    color: '#94A3B8',
+    fontWeight: '600',
+    fontSize: 14,
   },
   tabTextActive: {
-    color: '#38BDF8'
+    color: '#38BDF8',
+    fontWeight: '700',
   },
-  treinoTab: {
-    gap: 16
+
+  /* Tabs Content: Sprints History */
+  tabSectionTitle: {
+    color: '#F8FAFC',
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 12,
+  },
+  sprintsList: {
+    gap: 8,
   },
   emptyState: {
     padding: 32,
-    alignItems: 'center'
+    alignItems: 'center',
   },
   emptyText: {
     color: '#64748B',
-    fontSize: 16
-  },
-  sprintControls: {
-    backgroundColor: '#1E293B',
-    padding: 16,
-    borderRadius: 16,
-    marginTop: 8
-  },
-  sprintButtonsRow: {
-    flexDirection: 'row',
-    gap: 8
-  },
-  sprintBtn: {
-    flex: 1,
-    backgroundColor: '#334155',
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: 'center'
-  },
-  sprintBtnText: {
-    color: '#F8FAFC',
-    fontWeight: '600'
-  },
-  pendingSprintBox: {
-    alignItems: 'center',
-    padding: 16,
-    backgroundColor: '#0F172A',
-    borderRadius: 8
-  },
-  countdownBig: {
-    fontSize: 48,
-    fontWeight: 'bold',
-    color: '#38BDF8'
-  },
-  activeSprintBox: {
-    alignItems: 'center',
-    padding: 16,
-    backgroundColor: '#0284C7',
-    borderRadius: 8
-  },
-  sprintTitle: {
-    color: '#BAE6FD',
-    fontSize: 14,
-    fontWeight: '600'
-  },
-  sprintDistanceText: {
-    color: '#F8FAFC',
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginVertical: 8
-  },
-  cancelSprintBtn: {
-    marginTop: 12,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    backgroundColor: 'rgba(0,0,0,0.3)',
-    borderRadius: 6
-  },
-  cancelSprintText: {
-    color: '#F8FAFC',
-    fontSize: 12
-  },
-  sprintsList: {
-    gap: 8
+    fontSize: 16,
   },
   sprintItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     backgroundColor: '#1E293B',
     padding: 16,
-    borderRadius: 8
+    borderRadius: 8,
   },
   sprintItemTitle: {
     color: '#F8FAFC',
     fontSize: 16,
-    fontWeight: '600'
+    fontWeight: '600',
   },
   sprintItemTime: {
     color: '#38BDF8',
     fontSize: 16,
-    fontWeight: 'bold'
+    fontWeight: 'bold',
+  },
+
+  /* Metrics / Sensores Tab */
+  metricsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    justifyContent: 'space-between',
+  },
+  metricTile: {
+    width: '48%',
+    backgroundColor: '#1E293B',
+    borderRadius: 16,
+    padding: 12,
+    minHeight: 110,
+    justifyContent: 'space-between',
+  },
+  metricTitleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    width: '100%',
+  },
+  metricTitle: {
+    color: '#94A3B8',
+    fontSize: 12,
+  },
+  originBadge: {
+    backgroundColor: '#334155',
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  originBadgeText: {
+    color: '#38BDF8',
+    fontSize: 9,
+    fontWeight: '700',
+  },
+  metricValue: {
+    color: '#F8FAFC',
+    fontSize: 24,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+  },
+  metricUnit: {
+    color: '#64748B',
+    fontSize: 10,
   },
 });

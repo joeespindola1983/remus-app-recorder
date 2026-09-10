@@ -1,6 +1,6 @@
 {
   "name": "remus-app-recorder",
-  "version": "2.3.0",
+  "version": "2.5.0",
   "private": true,
   "scripts": {
     "test": "node --test tests/*.test.js",
@@ -10,7 +10,7 @@
     "bump:minor": "node scripts/bump-version.js minor",
     "bump:major": "node scripts/bump-version.js major",
     "build:android": "cd android && ./gradlew assembleRelease && cd .. && cp android/app/build/outputs/apk/release/app-release.apk dist/remus-recorder-release.apk",
-    "build:ios": "xcodebuild -workspace ios/remusapprecorder.xcworkspace -scheme remusapprecorder -configuration Release -archivePath ios/build/remusapprecorder.xcarchive -destination 'generic/platform=iOS' archive && xcodebuild -exportArchive -archivePath ios/build/remusapprecorder.xcarchive -exportPath ios/build/release-ipa-adhoc -exportOptionsPlist /tmp/exportOptions-adhoc.plist -allowProvisioningUpdates && cp ios/build/release-ipa-adhoc/remusapprecorder.ipa dist/remus-recorder-release.ipa",
+    "build:ios": "xcodebuild -workspace ios/remusapprecorder.xcworkspace -scheme remusapprecorder -configuration Release -archivePath ios/build/remusapprecorder.xcarchive -destination 'generic/platform=iOS' archive && xcodebuild -exportArchive -archivePath ios/build/remusapprecorder.xcarchive -exportPath ios/build/release-ipa-adhoc -exportOptionsPlist ios/exportOptions-adhoc.plist -allowProvisioningUpdates && cp ios/build/release-ipa-adhoc/remusapprecorder.ipa dist/remus-recorder-release.ipa",
     "build:release": "npm run build:android && npm run build:ios",
     "start": "react-native start",
     "ios": "react-native run-ios",

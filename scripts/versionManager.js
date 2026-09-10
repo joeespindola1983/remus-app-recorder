@@ -57,11 +57,11 @@ function updateVersions(rootDir, nextVersion, nextBuildNumber) {
   let watchPlist = fs.readFileSync(watchPlistPath, 'utf8');
   watchPlist = watchPlist.replace(
     /<key>CFBundleShortVersionString<\/key>\s*<string>[^<]*<\/string>/,
-    '<key>CFBundleShortVersionString</key>\n\t<string>$(MARKETING_VERSION)</string>'
+    `<key>CFBundleShortVersionString</key>\n\t<string>${nextVersion}</string>`
   );
   watchPlist = watchPlist.replace(
     /<key>CFBundleVersion<\/key>\s*<string>[^<]*<\/string>/,
-    '<key>CFBundleVersion</key>\n\t<string>$(CURRENT_PROJECT_VERSION)</string>'
+    `<key>CFBundleVersion</key>\n\t<string>${nextBuildNumber}</string>`
   );
   fs.writeFileSync(watchPlistPath, watchPlist, 'utf8');
 

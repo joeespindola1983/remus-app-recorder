@@ -86,7 +86,7 @@ internal object RecordingContextStore {
         require(c.optString("contextCompleteness") != "complete") { "Package already finalized" }
         require(input.optString("recordingId") == c.optString("recordingId")) { "Recording identity mismatch" }
         require(c.optString("captureStatus") != "recording") { "Stop recording before completing context" }
-        for (key in listOf("sportDiscipline", "rowingBoatClass", "boatClassSystem", "outriggerBoatClassCode", "originalBoatClassCode", "paddlerCapacity", "sensorPlacement", "participants", "notes")) c.put(key, input.opt(key) ?: JSONObject.NULL)
+        for (key in listOf("sportDiscipline", "rowingBoatClass", "boatClassSystem", "outriggerBoatClassCode", "originalBoatClassCode", "paddlerCapacity", "sensorPlacement", "participants", "notes", "sessionTitle", "sprints")) c.put(key, input.opt(key) ?: JSONObject.NULL)
         if (finalize) {
             validate(c)
             val start = Instant.parse(c.getString("startedAt")); val end = Instant.parse(c.getString("endedAt"))

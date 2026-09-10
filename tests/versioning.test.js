@@ -37,4 +37,8 @@ test('project versions are synchronized across config files', () => {
 
   // Verify iOS pbxproj matches
   assert.match(pbxContent, new RegExp(`MARKETING_VERSION = ${pkg.version};`));
+
+  // Verify Watch Info.plist matches
+  const watchPlist = fs.readFileSync(path.join(rootDir, 'ios/RemusWatch/Info.plist'), 'utf8');
+  assert.match(watchPlist, new RegExp(`<key>CFBundleShortVersionString</key>\\s*<string>${pkg.version}</string>`));
 });

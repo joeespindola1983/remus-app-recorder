@@ -15,6 +15,8 @@ struct WatchImport: Identifiable, Equatable {
 @MainActor
 final class WatchImportService: NSObject, ObservableObject {
     static let shared = WatchImportService()
+    var onHeartRateReceived: ((Double) -> Void)?
+
 
     @Published private(set) var imports: [WatchImport] = []
     @Published private(set) var connectionStatus = "Activating Apple Watch connection"
@@ -250,6 +252,9 @@ extension WatchImportService: WCSessionDelegate {
     }
 
     nonisolated private func updateWorkoutStatus(from payload: [String: Any]) {
+        if let hr = payload["heartRate"] as? Double {
+            Task { @MainActor in WatchImportService.shared.onHeartRateReceived?(hr) }
+        }
         guard let recordingState = payload["recordingState"] as? String else { return }
         let message: String
         switch recordingState {

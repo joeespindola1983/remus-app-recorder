@@ -57,7 +57,7 @@ struct WatchContentView: View {
     private var metrics: some View {
         Grid(horizontalSpacing: 12, verticalSpacing: 5) {
             GridRow {
-                value("Heart", recorder.heartRate.map { "\(Int($0)) bpm" } ?? "—")
+                heartValueView
                 value("Motion", "\(recorder.measuredHertz.formatted(.number.precision(.fractionLength(1)))) Hz")
             }
             GridRow {
@@ -69,6 +69,29 @@ struct WatchContentView: View {
                 value("Queue", recorder.queuedWrites.formatted())
             }
         }
+    }
+
+    private var heartValueView: some View {
+        VStack(spacing: 1) {
+            Text("Heart").font(.caption2).foregroundStyle(.secondary)
+            
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let isStale = recorder.isRecording && recorder.heartRate != nil && (recorder.lastHeartRateTimestamp == nil || context.date.timeIntervalSince(recorder.lastHeartRateTimestamp!) > 7.0)
+                
+                HStack(spacing: 2) {
+                    if isStale {
+                        Image(systemName: "heart.slash.fill")
+                            .foregroundStyle(.red)
+                            .font(.caption2)
+                    }
+                    Text(recorder.heartRate.map { "\(Int($0)) bpm" } ?? "—")
+                        .font(.caption.monospacedDigit())
+                        .lineLimit(1)
+                        .foregroundStyle(isStale ? .red : .primary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private func value(_ title: String, _ value: String) -> some View {

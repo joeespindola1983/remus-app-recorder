@@ -22,6 +22,7 @@ final class WatchRecorder: NSObject, ObservableObject {
     @Published private(set) var elapsedSamples = 0
     @Published private(set) var measuredHertz = 0.0
     @Published private(set) var heartRate: Double?
+    @Published private(set) var lastHeartRateTimestamp: Date?
     @Published private(set) var activeEnergyKilocalories: Double?
     @Published private(set) var distanceMeters: Double?
     @Published private(set) var gpsAccuracyMeters: Double?
@@ -224,6 +225,7 @@ final class WatchRecorder: NSObject, ObservableObject {
         measuredHertz = 0
         motionStartAttempt = 0
         heartRate = nil
+        lastHeartRateTimestamp = nil
         activeEnergyKilocalories = nil
         distanceMeters = nil
         state = .recording
@@ -417,6 +419,8 @@ final class WatchRecorder: NSObject, ObservableObject {
                 let unit = HKUnit.count().unitDivided(by: .minute())
                 guard let value = statistics.mostRecentQuantity()?.doubleValue(for: unit) else { continue }
                 heartRate = value
+                lastHeartRateTimestamp = Date()
+                publishHeartRate(value)
                 _ = writer.appendHealth(kind: "heart_rate", value: value, unit: "count/min", wallTime: now, elapsed: elapsed)
             } else if quantityType.identifier == HKQuantityTypeIdentifier.activeEnergyBurned.rawValue {
                 let unit = HKUnit.kilocalorie()
@@ -563,6 +567,24 @@ final class WatchRecorder: NSObject, ObservableObject {
         let session = WCSession.default
         session.delegate = self
         session.activate()
+    }
+
+    private var lastHeartRatePublish: TimeInterval = 0
+
+    private func publishHeartRate(_ value: Double) {
+        guard WCSession.isSupported() else { return }
+        let now = Date().timeIntervalSince1970
+        guard now - lastHeartRatePublish >= 2.0 else { return }
+        lastHeartRatePublish = now
+        
+        let payload: [String: Any] = [
+            "heartRate": value,
+            "updatedAt": now
+        ]
+        let session = WCSession.default
+        if session.activationState == .activated, session.isReachable {
+            session.sendMessage(payload, replyHandler: nil, errorHandler: nil)
+        }
     }
 
     private func publishRecordingState(_ recordingState: String, error: String? = nil, archiveCount: Int? = nil) {

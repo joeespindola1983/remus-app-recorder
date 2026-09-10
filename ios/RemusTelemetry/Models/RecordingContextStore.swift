@@ -84,7 +84,7 @@ enum RecordingContextStore {
         guard result["contextCompleteness"] as? String != "complete" else { throw error("Package already finalized") }
         guard input["recordingId"] as? String == result["recordingId"] as? String else { throw error("Recording identity mismatch") }
         guard result["captureStatus"] as? String != "recording" else { throw error("Stop recording before completing context") }
-        for key in ["sportDiscipline", "rowingBoatClass", "boatClassSystem", "outriggerBoatClassCode", "originalBoatClassCode", "paddlerCapacity", "sensorPlacement", "participants", "notes"] {
+        for key in ["sportDiscipline", "rowingBoatClass", "boatClassSystem", "outriggerBoatClassCode", "originalBoatClassCode", "paddlerCapacity", "sensorPlacement", "participants", "notes", "sessionTitle", "sprints"] {
             result[key] = input[key] ?? NSNull()
         }
         if finalize {

@@ -17,9 +17,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>$(MARKETING_VERSION)</string>
+	<string>2.5.0</string>
 	<key>CFBundleVersion</key>
-	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<string>11</string>
 	<key>NSHealthShareUsageDescription</key>
 	<string>Remus reads heart rate, active energy and distance during your rowing workout.</string>
 	<key>NSHealthUpdateUsageDescription</key>

@@ -37,6 +37,9 @@ test('i18n translation system - default pt-BR', () => {
   assert.strictEqual(t('app.title'), 'Gravador de Telemetria Remus');
   assert.strictEqual(t('recording.start'), 'Iniciar Gravação');
   assert.strictEqual(t('recording.stop'), 'Parar Gravação');
+  assert.strictEqual(t('tabs.workout'), 'Treino');
+  assert.strictEqual(t('tabs.sprints'), 'Sprints');
+  assert.strictEqual(t('tabs.sensors'), 'Sensores');
 });
 
 test('i18n translation system - switch to en-US', () => {
@@ -45,6 +48,9 @@ test('i18n translation system - switch to en-US', () => {
   assert.strictEqual(t('app.title'), 'Remus Telemetry Recorder');
   assert.strictEqual(t('recording.start'), 'Start Recording');
   assert.strictEqual(t('recording.stop'), 'Stop Recording');
+  assert.strictEqual(t('tabs.workout'), 'Workout');
+  assert.strictEqual(t('tabs.sprints'), 'Sprints');
+  assert.strictEqual(t('tabs.sensors'), 'Sensors');
 });
 
 test('i18n translation system - interpolation', () => {

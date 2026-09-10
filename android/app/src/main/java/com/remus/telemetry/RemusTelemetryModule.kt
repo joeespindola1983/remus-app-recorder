@@ -17,6 +17,7 @@ import android.os.PowerManager
 import android.os.SystemClock
 import android.media.ToneGenerator
 import android.media.AudioManager
+import android.media.MediaPlayer
 import androidx.core.content.FileProvider
 import com.facebook.react.bridge.*
 import com.facebook.react.modules.core.DeviceEventManagerModule
@@ -41,10 +42,20 @@ class RemusTelemetryModule(private val reactContext: ReactApplicationContext) :
     @ReactMethod
     fun playBeep(isLoud: Boolean, promise: Promise) {
         try {
-            val toneType = if (isLoud) ToneGenerator.TONE_CDMA_ABBR_ALERT else ToneGenerator.TONE_PROP_BEEP
+            if (isLoud) {
+                val resId = reactContext.resources.getIdentifier("motor_horn", "raw", reactContext.packageName)
+                if (resId != 0) {
+                    val mediaPlayer = MediaPlayer.create(reactContext, resId)
+                    mediaPlayer?.setOnCompletionListener { it.release() }
+                    mediaPlayer?.start()
+                    promise.resolve(null)
+                    return
+                }
+            }
+            val toneType = if (isLoud) ToneGenerator.TONE_SUP_ERROR else ToneGenerator.TONE_PROP_BEEP
             val volume = if (isLoud) 100 else 70
             val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, volume)
-            toneGen.startTone(toneType, if (isLoud) 400 else 150)
+            toneGen.startTone(toneType, if (isLoud) 1000 else 150)
             Handler(reactContext.mainLooper).postDelayed({ toneGen.release() }, 500)
             promise.resolve(null)
         } catch (e: Exception) {

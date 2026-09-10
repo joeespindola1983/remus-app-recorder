@@ -9,48 +9,51 @@ type Tab = 'record' | 'sessions' | 'watch';
 
 const App = () => {
   const [activeTab, setActiveTab] = useState<Tab>('record');
+  const [isRecording, setIsRecording] = useState(false);
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#0F172A" />
+    <SafeAreaView style={[styles.container, isRecording && styles.containerRecording]}>
+      <StatusBar barStyle="light-content" backgroundColor={isRecording ? '#000000' : '#0F172A'} />
 
       <View style={styles.content}>
-        {activeTab === 'record' && <RecorderScreen />}
+        {activeTab === 'record' && <RecorderScreen onRecordingChange={setIsRecording} />}
         {activeTab === 'sessions' && <SessionsScreen />}
         {activeTab === 'watch' && <WatchScreen />}
       </View>
 
-      <View style={styles.tabBar}>
-        <TouchableOpacity
-          style={[styles.tabItem, activeTab === 'record' && styles.tabItemActive]}
-          onPress={() => setActiveTab('record')}
-        >
-          <Text style={styles.tabIcon}>⏺</Text>
-          <Text style={[styles.tabLabel, activeTab === 'record' && styles.tabLabelActive]}>
-            {t('tabs.record')}
-          </Text>
-        </TouchableOpacity>
+      {!isRecording && (
+        <View style={styles.tabBar}>
+          <TouchableOpacity
+            style={[styles.tabItem, activeTab === 'record' && styles.tabItemActive]}
+            onPress={() => setActiveTab('record')}
+          >
+            <Text style={styles.tabIcon}>⏺</Text>
+            <Text style={[styles.tabLabel, activeTab === 'record' && styles.tabLabelActive]}>
+              {t('tabs.record')}
+            </Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[styles.tabItem, activeTab === 'sessions' && styles.tabItemActive]}
-          onPress={() => setActiveTab('sessions')}
-        >
-          <Text style={styles.tabIcon}>📋</Text>
-          <Text style={[styles.tabLabel, activeTab === 'sessions' && styles.tabLabelActive]}>
-            {t('tabs.sessions')}
-          </Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tabItem, activeTab === 'sessions' && styles.tabItemActive]}
+            onPress={() => setActiveTab('sessions')}
+          >
+            <Text style={styles.tabIcon}>📋</Text>
+            <Text style={[styles.tabLabel, activeTab === 'sessions' && styles.tabLabelActive]}>
+              {t('tabs.sessions')}
+            </Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[styles.tabItem, activeTab === 'watch' && styles.tabItemActive]}
-          onPress={() => setActiveTab('watch')}
-        >
-          <Text style={styles.tabIcon}>⌚</Text>
-          <Text style={[styles.tabLabel, activeTab === 'watch' && styles.tabLabelActive]}>
-            {t('tabs.watch')}
-          </Text>
-        </TouchableOpacity>
-      </View>
+          <TouchableOpacity
+            style={[styles.tabItem, activeTab === 'watch' && styles.tabItemActive]}
+            onPress={() => setActiveTab('watch')}
+          >
+            <Text style={styles.tabIcon}>⌚</Text>
+            <Text style={[styles.tabLabel, activeTab === 'watch' && styles.tabLabelActive]}>
+              {t('tabs.watch')}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </SafeAreaView>
   );
 };
@@ -59,6 +62,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0F172A'
+  },
+  containerRecording: {
+    backgroundColor: '#000000'
   },
   content: {
     flex: 1

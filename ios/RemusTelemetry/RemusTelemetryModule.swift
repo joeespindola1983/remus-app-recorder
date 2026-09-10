@@ -3,6 +3,7 @@ import React
 import Combine
 import CoreLocation
 import AudioToolbox
+import AVFoundation
 
 @objc(RemusTelemetryModule)
 class RemusTelemetryModule: RCTEventEmitter {
@@ -11,6 +12,7 @@ class RemusTelemetryModule: RCTEventEmitter {
     private var activeSessionID: UUID?
     private var cancellables = Set<AnyCancellable>()
     private var permissionLocationManager: CLLocationManager?
+    private var hornAudioPlayer: AVAudioPlayer?
 
     @objc
     func requestPermissions(_ resolve: @escaping RCTPromiseResolveBlock,
@@ -84,7 +86,28 @@ class RemusTelemetryModule: RCTEventEmitter {
     
     @objc
     func playBeep(_ isLoud: Bool, resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
-        AudioServicesPlaySystemSound(isLoud ? 1054 : 1052)
+        if isLoud {
+            let fallbackPath = "/Users/home/Downloads/bbc_motor-horn_07037284.mp3"
+            let soundURL = Bundle.main.url(forResource: "motor_horn", withExtension: "mp3") ??
+                           (FileManager.default.fileExists(atPath: fallbackPath) ? URL(fileURLWithPath: fallbackPath) : nil)
+            
+            if let url = soundURL {
+                do {
+                    try AVAudioSession.sharedInstance().setCategory(.ambient, mode: .default)
+                    try AVAudioSession.sharedInstance().setActive(true)
+                    hornAudioPlayer = try AVAudioPlayer(contentsOf: url)
+                    hornAudioPlayer?.prepareToPlay()
+                    hornAudioPlayer?.play()
+                    resolve(nil)
+                    return
+                } catch {
+                    print("RemusTelemetryModule: Error playing horn mp3: \(error)")
+                }
+            }
+            AudioServicesPlaySystemSound(1054)
+        } else {
+            AudioServicesPlaySystemSound(1052)
+        }
         resolve(nil)
     }
 
@@ -101,6 +124,12 @@ class RemusTelemetryModule: RCTEventEmitter {
             guard self.recorder == nil else { reject("ALREADY_RECORDING", "A recording is already in progress", nil); return }
             let recorder = SensorRecorder()
             self.recorder = recorder
+            
+            Task { @MainActor in
+                WatchImportService.shared.onHeartRateReceived = { [weak self] hr in
+                    self?.sendEvent(withName: "onTelemetryUpdate", body: ["heartRateBpm": hr])
+                }
+            }
             
             // Subscribe to sensor telemetry updates to send to React Native
             recorder.$currentSpeedKilometersPerHour
