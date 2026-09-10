@@ -127,7 +127,10 @@ class RemusTelemetryModule: RCTEventEmitter {
             
             Task { @MainActor in
                 WatchImportService.shared.onHeartRateReceived = { [weak self] hr in
-                    self?.sendEvent(withName: "onTelemetryUpdate", body: ["heartRateBpm": hr])
+                    self?.sendEvent(withName: "onTelemetryUpdate", body: ["heartRateBpm": hr, "watchActive": true])
+                }
+                WatchImportService.shared.onWatchActiveChanged = { [weak self] active in
+                    self?.sendEvent(withName: "onTelemetryUpdate", body: ["watchActive": active])
                 }
             }
             
@@ -229,6 +232,12 @@ class RemusTelemetryModule: RCTEventEmitter {
                 _ = try RecordingContextStore.read(folder, capture: true)
                 self.activeSessionFolder = folder
                 self.activeSessionID = sessionUUID
+                if WCSession.isSupported() {
+                    let session = WCSession.default
+                    if session.isPaired && session.isWatchAppInstalled {
+                        self.sendEvent(withName: "onTelemetryUpdate", body: ["watchActive": true])
+                    }
+                }
                 resolve([
                     "sessionId": sessionUUID.uuidString,
                     "folderUri": folder.path
@@ -253,6 +262,7 @@ class RemusTelemetryModule: RCTEventEmitter {
             
             recorder.stop()
             self.cancellables.removeAll()
+            self.sendEvent(withName: "onTelemetryUpdate", body: ["watchActive": false])
             
             let folderURL = recorder.lastSessionURL
             self.recorder = nil

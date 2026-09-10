@@ -16,6 +16,7 @@ struct WatchImport: Identifiable, Equatable {
 final class WatchImportService: NSObject, ObservableObject {
     static let shared = WatchImportService()
     var onHeartRateReceived: ((Double) -> Void)?
+    var onWatchActiveChanged: ((Bool) -> Void)?
 
 
     @Published private(set) var imports: [WatchImport] = []
@@ -253,9 +254,20 @@ extension WatchImportService: WCSessionDelegate {
 
     nonisolated private func updateWorkoutStatus(from payload: [String: Any]) {
         if let hr = payload["heartRate"] as? Double {
-            Task { @MainActor in WatchImportService.shared.onHeartRateReceived?(hr) }
+            Task { @MainActor in
+                WatchImportService.shared.onHeartRateReceived?(hr)
+                WatchImportService.shared.onWatchActiveChanged?(true)
+            }
+        }
+        if let watchActive = payload["watchActive"] as? Bool {
+            Task { @MainActor in WatchImportService.shared.onWatchActiveChanged?(watchActive) }
         }
         guard let recordingState = payload["recordingState"] as? String else { return }
+        if recordingState == "recording" {
+            Task { @MainActor in WatchImportService.shared.onWatchActiveChanged?(true) }
+        } else if recordingState == "stopping" || recordingState == "saved" || recordingState == "failed" {
+            Task { @MainActor in WatchImportService.shared.onWatchActiveChanged?(false) }
+        }
         let message: String
         switch recordingState {
         case "recording": message = "Apple Watch confirmed recording"

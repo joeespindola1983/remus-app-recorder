@@ -574,16 +574,20 @@ final class WatchRecorder: NSObject, ObservableObject {
     private func publishHeartRate(_ value: Double) {
         guard WCSession.isSupported() else { return }
         let now = Date().timeIntervalSince1970
-        guard now - lastHeartRatePublish >= 2.0 else { return }
+        guard now - lastHeartRatePublish >= 1.0 else { return }
         lastHeartRatePublish = now
         
         let payload: [String: Any] = [
             "heartRate": value,
+            "watchActive": true,
             "updatedAt": now
         ]
         let session = WCSession.default
-        if session.activationState == .activated, session.isReachable {
-            session.sendMessage(payload, replyHandler: nil, errorHandler: nil)
+        if session.activationState == .activated {
+            if session.isReachable {
+                session.sendMessage(payload, replyHandler: nil, errorHandler: nil)
+            }
+            try? session.updateApplicationContext(payload)
         }
     }
 
@@ -591,6 +595,7 @@ final class WatchRecorder: NSObject, ObservableObject {
         guard WCSession.isSupported() else { return }
         var payload: [String: Any] = [
             "recordingState": recordingState,
+            "watchActive": recordingState == "recording",
             "updatedAt": Date().timeIntervalSince1970
         ]
         if let error { payload["error"] = error }

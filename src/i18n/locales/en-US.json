@@ -118,5 +118,12 @@
   "context.boat.uncoxed": "without coxswain",
   "recorder.origin.reported": "GPS",
   "recorder.origin.coordinateDerived": "Degraded",
-  "recorder.origin.unavailable": "Unavailable"
+  "recorder.origin.unavailable": "Unavailable",
+  "sprint.cancel": "Cancel",
+  "sprint.finish": "Finish",
+  "recorder.spm.collectingStatus": "COLLECTING",
+  "recorder.gps.strong": "Strong GPS",
+  "recorder.gps.moderate": "Moderate GPS",
+  "recorder.gps.weak": "Weak GPS",
+  "recorder.gps.noSignal": "No GPS Signal"
 }

@@ -118,5 +118,12 @@
   "context.boat.uncoxed": "sem timoneiro",
   "recorder.origin.reported": "GPS",
   "recorder.origin.coordinateDerived": "Degradado",
-  "recorder.origin.unavailable": "Indisponível"
+  "recorder.origin.unavailable": "Indisponível",
+  "sprint.cancel": "Cancelar",
+  "sprint.finish": "Finalizar",
+  "recorder.spm.collectingStatus": "COLETANDO",
+  "recorder.gps.strong": "GPS Forte",
+  "recorder.gps.moderate": "GPS Moderado",
+  "recorder.gps.weak": "GPS Fraco",
+  "recorder.gps.noSignal": "Sem Sinal GPS"
 }

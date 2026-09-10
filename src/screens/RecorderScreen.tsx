@@ -19,6 +19,7 @@ import { analyticsService } from '../services/analyticsService';
 import { RecordingContextForm } from './RecordingContextForm';
 import { normalizeTelemetryEvent, resolveStrokeRateDisplay } from '../contracts/telemetryContract';
 import { getRecordingState } from '../contracts/bridgeContract';
+import { getGpsSignalLevel, resolveHeartRateDisplay } from '../utils/dashboardIndicators';
 
 const sessionManager = new SessionManager(telemetryBridge);
 const { RemusTelemetryModule } = NativeModules;
@@ -89,6 +90,40 @@ export interface RecorderScreenProps {
   onRecordingChange?: (isRecording: boolean) => void;
 }
 
+const GpsSignalIndicator: React.FC<{ accuracyMeters: number | null }> = ({ accuracyMeters }) => {
+  const signal = getGpsSignalLevel(accuracyMeters);
+  const dimmedColor = '#334155';
+
+  return (
+    <View style={styles.gpsIndicatorContainer} accessibilityLabel={`GPS ${accuracyMeters != null ? accuracyMeters.toFixed(1) + 'm' : ''}`}>
+      <Text style={styles.gpsText}>GPS</Text>
+      <View style={styles.gpsBars}>
+        <View
+          style={[
+            styles.gpsBar,
+            styles.gpsBar1,
+            { backgroundColor: signal.level >= 1 ? signal.color : dimmedColor },
+          ]}
+        />
+        <View
+          style={[
+            styles.gpsBar,
+            styles.gpsBar2,
+            { backgroundColor: signal.level >= 2 ? signal.color : dimmedColor },
+          ]}
+        />
+        <View
+          style={[
+            styles.gpsBar,
+            styles.gpsBar3,
+            { backgroundColor: signal.level >= 3 ? signal.color : dimmedColor },
+          ]}
+        />
+      </View>
+    </View>
+  );
+};
+
 export const RecorderScreen: React.FC<RecorderScreenProps> = ({ onRecordingChange }) => {
   const [isRecording, setIsRecording] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
@@ -120,12 +155,14 @@ export const RecorderScreen: React.FC<RecorderScreenProps> = ({ onRecordingChang
   const [metrics, setMetrics] = useState<MetricsState>(INITIAL_METRICS);
   const [lastHeartRate, setLastHeartRate] = useState<{value: number, timestamp: number} | null>(null);
   const [lastAvailableSpm, setLastAvailableSpm] = useState<{value: number, timestamp: number} | null>(null);
+  const [isWatchActive, setIsWatchActive] = useState(false);
 
   const resetScreenState = () => {
     setDuration(0);
     setMetrics(INITIAL_METRICS);
     setLastHeartRate(null);
     setLastAvailableSpm(null);
+    setIsWatchActive(false);
     setSprintMenuOpen(false);
     setSprintCountdown(null);
     setSprintTarget(null);
@@ -167,14 +204,18 @@ export const RecorderScreen: React.FC<RecorderScreenProps> = ({ onRecordingChang
 
   useEffect(() => {
     if (!telemetryEmitter) return;
-    const subscription = telemetryEmitter.addListener('onTelemetryUpdate', (data: Partial<MetricsState>) => {
+    const subscription = telemetryEmitter.addListener('onTelemetryUpdate', (data: Partial<MetricsState> & { watchActive?: boolean }) => {
       setMetrics(prev => {
         const normalized = normalizeTelemetryEvent(data, prev);
         if (normalized.strokeRateStatus === 'available' && normalized.strokeRateSpm != null) {
           setLastAvailableSpm({ value: normalized.strokeRateSpm, timestamp: Date.now() });
         }
+        if (data.watchActive !== undefined) {
+          setIsWatchActive(Boolean(data.watchActive));
+        }
         if (data.heartRateBpm !== undefined && data.heartRateBpm !== null) {
           setLastHeartRate({ value: data.heartRateBpm as number, timestamp: Date.now() });
+          setIsWatchActive(true);
         }
         return { ...prev, ...normalized };
       });
@@ -220,6 +261,21 @@ export const RecorderScreen: React.FC<RecorderScreenProps> = ({ onRecordingChang
   const cancelSprint = () => {
     setSprintCountdown(null);
     setSprintTarget(null);
+    setActiveSprint(null);
+  };
+
+  const finishSprint = () => {
+    if (!activeSprint) return;
+    telemetryBridge.playBeep(true).catch(console.warn);
+    const durationSeconds = (Date.now() - activeSprint.startTime) / 1000;
+    const distanceTraveled = metrics.distanceMeters != null 
+      ? Math.max(0, metrics.distanceMeters - activeSprint.startDistance)
+      : activeSprint.target;
+    setCompletedSprints(prev => [...prev, {
+      targetDistance: Math.round(distanceTraveled),
+      durationSeconds,
+      startedAt: new Date(activeSprint.startTime).toISOString()
+    }]);
     setActiveSprint(null);
   };
 
@@ -332,12 +388,14 @@ export const RecorderScreen: React.FC<RecorderScreenProps> = ({ onRecordingChang
     return `X ${vector.x.toFixed(2)} · Y ${vector.y.toFixed(2)} · Z ${vector.z.toFixed(2)}`;
   };
 
-  const isHeartRateStale = !lastHeartRate || (Date.now() - lastHeartRate.timestamp > 7000);
-  const heartRateValue = lastHeartRate && !isHeartRateStale ? Math.round(lastHeartRate.value).toString() : '—';
-  const hrColor = isHeartRateStale ? '#94A3B8' : '#EF4444';
-  const hrIcon = isHeartRateStale ? '♡' : '♥';
+  const hrDisplay = resolveHeartRateDisplay({
+    isWatchActive,
+    lastHeartRate,
+    now: Date.now(),
+  });
 
   const spmDisplay = resolveStrokeRateDisplay(metrics, lastAvailableSpm, Date.now());
+  const isCollectingSpm = spmDisplay.status === 'collecting';
 
   const pace = metrics.groundSpeedMetersPerSecond && metrics.groundSpeedMetersPerSecond > 0 
     ? 500 / metrics.groundSpeedMetersPerSecond 
@@ -424,9 +482,13 @@ export const RecorderScreen: React.FC<RecorderScreenProps> = ({ onRecordingChang
                       ? `⚡ PREPARAR ${sprintTarget}M` 
                       : (isPaused ? 'PAUSADO' : '● GRAVANDO')}
                 </Text>
-                <Text style={styles.scIcons}>
-                  <Text style={{ color: hrColor }}>{hrIcon} {heartRateValue}</Text>  GPS 🔋
-                </Text>
+                <View style={styles.scIndicatorsRow}>
+                  <Text style={[styles.hrText, { color: hrDisplay.color }]}>
+                    {hrDisplay.icon} {hrDisplay.value}
+                  </Text>
+                  <GpsSignalIndicator accuracyMeters={metrics.horizontalAccuracyMeters} />
+                  <Text style={styles.batteryText}>🔋</Text>
+                </View>
               </View>
 
               {/* Countdown Overlay when preparing sprint */}
@@ -461,9 +523,15 @@ export const RecorderScreen: React.FC<RecorderScreenProps> = ({ onRecordingChang
                     styles.scValueBig,
                     activeSprint && styles.scValueBigSprint,
                     isPaused && styles.scValueBigPaused,
+                    isCollectingSpm && styles.scValueCollecting,
                   ]} adjustsFontSizeToFit numberOfLines={1}>
-                    {spmDisplay.value !== null ? spmDisplay.value.toFixed(0) : '0'}
+                    {spmDisplay.value !== null ? spmDisplay.value.toFixed(0) : (isCollectingSpm ? '—' : '0')}
                   </Text>
+                  {isCollectingSpm ? (
+                    <Text style={[styles.scSubStatus, activeSprint && styles.scLabelSprint, isPaused && styles.scLabelPaused]}>
+                      {t('recorder.spm.collectingStatus')}
+                    </Text>
+                  ) : null}
                   <Text style={[
                     styles.scLabel, 
                     activeSprint && styles.scLabelSprint,
@@ -563,63 +631,97 @@ export const RecorderScreen: React.FC<RecorderScreenProps> = ({ onRecordingChang
               styles.fabsRowRight,
               isLandscape && styles.fabsColumnLandscape
             ]}>
-              {/* Sprint FAB (Verde) - or Cancel if active/countdown */}
-              <View style={styles.fabItem}>
-                {/* Sprint Speed Dial Options: 500m, 250m, 100m */}
-                {sprintMenuOpen && (
-                  <View style={[
-                    styles.sprintSpeedDial,
-                    isLandscape && styles.sprintSpeedDialLandscape
-                  ]}>
+              {activeSprint ? (
+                /* IN SPRINT: Show Finish & Cancel; HIDE Stop button */
+                <>
+                  {/* Finalizar Sprint FAB (Verde) */}
+                  <View style={styles.fabItem}>
                     <TouchableOpacity
-                      style={styles.sprintOptionFab}
-                      onPress={() => initiateSprint(500)}
+                      style={[styles.fabCircle, styles.sprintFabGreen, transitioning && styles.fabDisabled]}
+                      onPress={finishSprint}
+                      disabled={transitioning}
                       activeOpacity={0.8}
                     >
-                      <Text style={styles.sprintOptionDistance}>500m</Text>
+                      <Text style={styles.fabIcon}>✓</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.sprintOptionFab}
-                      onPress={() => initiateSprint(250)}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={styles.sprintOptionDistance}>250m</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.sprintOptionFab}
-                      onPress={() => initiateSprint(100)}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={styles.sprintOptionDistance}>100m</Text>
-                    </TouchableOpacity>
+                    <Text style={styles.fabText}>{t('sprint.finish')}</Text>
                   </View>
-                )}
 
-                <TouchableOpacity
-                  style={[
-                    styles.fabCircle, 
-                    (activeSprint || sprintCountdown !== null) ? styles.cancelSprintFab : styles.sprintFabGreen, 
-                    sprintMenuOpen && styles.sprintFabActive,
-                    transitioning && styles.fabDisabled
-                  ]}
-                  onPress={() => {
-                    if (activeSprint || sprintCountdown !== null) {
-                      cancelSprint();
-                    } else {
-                      setSprintMenuOpen(prev => !prev);
-                    }
-                  }}
-                  disabled={transitioning}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.fabIcon}>
-                    {(activeSprint || sprintCountdown !== null) ? '✕' : (sprintMenuOpen ? '✕' : '⚡')}
-                  </Text>
-                </TouchableOpacity>
-                <Text style={styles.fabText}>
-                  {(activeSprint || sprintCountdown !== null) ? t('common.cancel') : t('recording.sprint')}
-                </Text>
-              </View>
+                  {/* Cancelar Sprint FAB (Vermelho) */}
+                  <View style={styles.fabItem}>
+                    <TouchableOpacity
+                      style={[styles.fabCircle, styles.cancelSprintFab, transitioning && styles.fabDisabled]}
+                      onPress={cancelSprint}
+                      disabled={transitioning}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.fabIcon}>✕</Text>
+                    </TouchableOpacity>
+                    <Text style={styles.fabText}>{t('sprint.cancel')}</Text>
+                  </View>
+                </>
+              ) : sprintCountdown !== null ? (
+                /* IN COUNTDOWN: Show Cancel; HIDE Stop button */
+                <View style={styles.fabItem}>
+                  <TouchableOpacity
+                    style={[styles.fabCircle, styles.cancelSprintFab, transitioning && styles.fabDisabled]}
+                    onPress={cancelSprint}
+                    disabled={transitioning}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.fabIcon}>✕</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.fabText}>{t('sprint.cancel')}</Text>
+                </View>
+              ) : (
+                /* NORMAL RECORDING: Show Sprint FAB with Speed Dial */
+                <View style={styles.fabItem}>
+                  {/* Sprint Speed Dial Options: 500m, 250m, 100m */}
+                  {sprintMenuOpen && (
+                    <View style={[
+                      styles.sprintSpeedDial,
+                      isLandscape && styles.sprintSpeedDialLandscape
+                    ]}>
+                      <TouchableOpacity
+                        style={styles.sprintOptionFab}
+                        onPress={() => initiateSprint(500)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.sprintOptionDistance}>500m</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.sprintOptionFab}
+                        onPress={() => initiateSprint(250)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.sprintOptionDistance}>250m</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.sprintOptionFab}
+                        onPress={() => initiateSprint(100)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.sprintOptionDistance}>100m</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+
+                  <TouchableOpacity
+                    style={[
+                      styles.fabCircle, 
+                      styles.sprintFabGreen, 
+                      sprintMenuOpen && styles.sprintFabActive,
+                      transitioning && styles.fabDisabled
+                    ]}
+                    onPress={() => setSprintMenuOpen(prev => !prev)}
+                    disabled={transitioning}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.fabIcon}>{sprintMenuOpen ? '✕' : '⚡'}</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.fabText}>{t('recording.sprint')}</Text>
+                </View>
+              )}
 
               {/* Pause / Resume FAB (Azul Claro) */}
               <View style={styles.fabItem}>
@@ -641,25 +743,27 @@ export const RecorderScreen: React.FC<RecorderScreenProps> = ({ onRecordingChang
                 <Text style={styles.fabText}>{isPaused ? t('recording.resume') : t('recording.pause')}</Text>
               </View>
 
-              {/* Stop FAB (Vermelho) */}
-              <View style={styles.fabItem}>
-                <TouchableOpacity
-                  style={[
-                    styles.fabCircle, 
-                    styles.stopFabRed,
-                    transitioning && styles.fabDisabled
-                  ]}
-                  onPress={() => {
-                    setSprintMenuOpen(false);
-                    handleStop();
-                  }}
-                  disabled={transitioning}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.fabIconStop}>⏹</Text>
-                </TouchableOpacity>
-                <Text style={styles.fabText}>{t('recording.stop')}</Text>
-              </View>
+              {/* Stop FAB (Vermelho) - ONLY shown when NOT in sprint or countdown */}
+              {!activeSprint && sprintCountdown === null && (
+                <View style={styles.fabItem}>
+                  <TouchableOpacity
+                    style={[
+                      styles.fabCircle, 
+                      styles.stopFabRed,
+                      transitioning && styles.fabDisabled
+                    ]}
+                    onPress={() => {
+                      setSprintMenuOpen(false);
+                      handleStop();
+                    }}
+                    disabled={transitioning}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.fabIconStop}>⏹</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.fabText}>{t('recording.stop')}</Text>
+                </View>
+              )}
             </View>
           </View>
         )}
@@ -792,10 +896,61 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#F8FAFC',
   },
-  scIcons: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
+  scIndicatorsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  hrText: {
+    fontSize: 13,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
+  },
+  gpsIndicatorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  gpsText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#94A3B8',
+    letterSpacing: 0.5,
+  },
+  gpsBars: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    height: 12,
+    gap: 2,
+    paddingBottom: 1,
+  },
+  gpsBar: {
+    width: 3,
+    borderRadius: 1,
+  },
+  gpsBar1: {
+    height: 4,
+  },
+  gpsBar2: {
+    height: 7,
+  },
+  gpsBar3: {
+    height: 11,
+  },
+  batteryText: {
+    fontSize: 12,
+  },
+  scValueCollecting: {
+    color: '#94A3B8',
+  },
+  scSubStatus: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#94A3B8',
+    position: 'absolute',
+    top: 6,
+    left: 8,
+    letterSpacing: 0.5,
   },
   scRow: {
     flex: 1,
