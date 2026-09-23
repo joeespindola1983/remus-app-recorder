@@ -581,6 +581,34 @@ class RemusTelemetryModule: RCTEventEmitter {
         }
     }
 
+    @objc
+    func saveRemusSessionFile(_ recordingId: String,
+                              filename: String,
+                              base64: String,
+                              resolver resolve: @escaping RCTPromiseResolveBlock,
+                              rejecter reject: @escaping RCTPromiseRejectBlock) {
+        DispatchQueue.global(qos: .utility).async {
+            guard let data = Data(base64Encoded: base64) else {
+                reject("INVALID_BASE64", "Could not decode the Remus artifact", nil)
+                return
+            }
+            guard let folder = self.lastStoppedFolder,
+                  self.lastStoppedSessionID?.uuidString.caseInsensitiveCompare(recordingId) == .orderedSame else {
+                reject("SESSION_NOT_FOUND", "The stopped recording does not match the Remus artifact", nil)
+                return
+            }
+            let sourceExtension = URL(fileURLWithPath: filename).pathExtension.lowercased()
+            let safeExtension = sourceExtension == "bin" ? "bin" : "rbp2"
+            let destination = folder.appendingPathComponent("remus_sensor.\(safeExtension)")
+            do {
+                try data.write(to: destination, options: .atomic)
+                resolve(destination.path)
+            } catch {
+                reject("REMUS_FILE_WRITE_FAILED", error.localizedDescription, error)
+            }
+        }
+    }
+
     private func startBleScan() {
         centralManager?.scanForPeripherals(withServices: [remusServiceUUID], options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
     }
@@ -636,6 +664,17 @@ extension RemusTelemetryModule: CBCentralManagerDelegate, CBPeripheralDelegate {
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard let data = characteristic.value else { return }
+
+        // File packets are binary (0x20 + offset + length + payload). Never
+        // decode or append them as CSV; the JS receiver reconstructs the RBP
+        // file and validates its final coverage and CRC.
+        if data.first == 0x20 {
+            sendEvent(withName: "onRemusDeviceTelemetry", body: [
+                "rawBase64": data.base64EncodedString()
+            ])
+            return
+        }
+
         let csv = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
         // Removed excessive logging of every received packet
         sendEvent(withName: "onRemusDeviceTelemetry", body: ["csv": csv])

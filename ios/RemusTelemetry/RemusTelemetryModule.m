@@ -42,6 +42,12 @@ RCT_EXTERN_METHOD(sendRemusBleCommand:(NSString *)command
                   resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 
+RCT_EXTERN_METHOD(saveRemusSessionFile:(NSString *)recordingId
+                  filename:(NSString *)filename
+                  base64:(NSString *)base64
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+
 RCT_EXTERN_METHOD(requestWatchStopAndTransfer:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 

@@ -1,7 +1,20 @@
 package com.remus.telemetry
 
+import android.Manifest
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothGattCallback
+import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattDescriptor
+import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothProfile
+import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanFilter
+import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -14,11 +27,14 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.PowerManager
+import android.os.ParcelUuid
 import android.os.SystemClock
 import android.media.ToneGenerator
 import android.media.AudioManager
 import android.media.MediaPlayer
+import android.util.Base64
 import androidx.core.content.FileProvider
+import androidx.core.content.ContextCompat
 import com.facebook.react.bridge.*
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import org.json.JSONObject
@@ -38,6 +54,213 @@ class RemusTelemetryModule(private val reactContext: ReactApplicationContext) :
 
     private var writer: AndroidSessionDatabaseWriter? = null
     private var activeSessionId: String? = null
+    private val remusServiceUuid = UUID.fromString("4fafc201-1fb5-459e-8fcc-c5c9c331914b")
+    private val remusCharacteristicUuid = UUID.fromString("beb5483e-36e1-4688-b7f5-ea07361b26a8")
+    private val clientConfigUuid = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
+    private val bluetoothManager by lazy {
+        reactContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+    }
+    private val bluetoothAdapter: BluetoothAdapter?
+        get() = bluetoothManager?.adapter
+    private var remusGatt: BluetoothGatt? = null
+    private var remusCharacteristic: BluetoothGattCharacteristic? = null
+    private var remusScanning = false
+
+    private fun hasBluetoothPermission(permission: String): Boolean =
+        ContextCompat.checkSelfPermission(reactContext, permission) == PackageManager.PERMISSION_GRANTED
+
+    private fun canScanRemus(): Boolean = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        hasBluetoothPermission(Manifest.permission.BLUETOOTH_SCAN) &&
+            hasBluetoothPermission(Manifest.permission.BLUETOOTH_CONNECT)
+    } else {
+        hasBluetoothPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+    }
+
+    private val remusScanCallback = object : ScanCallback() {
+        override fun onScanResult(callbackType: Int, result: ScanResult) {
+            if (!canScanRemus()) return
+            try {
+                bluetoothAdapter?.bluetoothLeScanner?.stopScan(this)
+                remusScanning = false
+                sendRemusConnectionState("connecting", result.device.name ?: "REMUS")
+                remusGatt?.close()
+                remusGatt = result.device.connectGatt(reactContext, false, remusGattCallback)
+            } catch (error: SecurityException) {
+                sendRemusConnectionState("disconnected")
+            }
+        }
+
+        override fun onScanFailed(errorCode: Int) {
+            remusScanning = false
+            sendRemusConnectionState("disconnected")
+        }
+    }
+
+    private val remusGattCallback = object : BluetoothGattCallback() {
+        override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+            if (newState == BluetoothProfile.STATE_CONNECTED) {
+                if (!canScanRemus()) return
+                try {
+                    gatt.discoverServices()
+                } catch (_: SecurityException) {
+                    sendRemusConnectionState("disconnected")
+                }
+            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                remusCharacteristic = null
+                if (remusGatt === gatt) remusGatt = null
+                gatt.close()
+                sendRemusConnectionState("disconnected")
+            }
+        }
+
+        override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+            val characteristic = gatt.getService(remusServiceUuid)
+                ?.getCharacteristic(remusCharacteristicUuid) ?: run {
+                sendRemusConnectionState("disconnected")
+                return
+            }
+            remusCharacteristic = characteristic
+            if (!canScanRemus()) return
+            try {
+                gatt.setCharacteristicNotification(characteristic, true)
+                characteristic.getDescriptor(clientConfigUuid)?.let { descriptor ->
+                    @Suppress("DEPRECATION")
+                    descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                    @Suppress("DEPRECATION")
+                    gatt.writeDescriptor(descriptor)
+                }
+                sendRemusConnectionState("connected", gatt.device.name ?: "REMUS")
+            } catch (_: SecurityException) {
+                sendRemusConnectionState("disconnected")
+            }
+        }
+
+        @Deprecated("Deprecated in Java")
+        override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
+            @Suppress("DEPRECATION")
+            characteristic.value?.let(::emitRemusPacket)
+        }
+
+        override fun onCharacteristicChanged(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            value: ByteArray
+        ) {
+            emitRemusPacket(value)
+        }
+    }
+
+    private fun sendRemusConnectionState(state: String, name: String? = null) {
+        val body = Arguments.createMap().apply {
+            putString("state", state)
+            if (name != null) putString("name", name)
+        }
+        sendEvent("onRemusDeviceConnectionState", body)
+    }
+
+    private fun emitRemusPacket(bytes: ByteArray) {
+        if (bytes.isEmpty()) return
+        val body = Arguments.createMap()
+        if (bytes[0].toInt() and 0xff == 0x20) {
+            body.putString("rawBase64", Base64.encodeToString(bytes, Base64.NO_WRAP))
+        } else {
+            body.putString("csv", String(bytes, Charsets.UTF_8))
+        }
+        sendEvent("onRemusDeviceTelemetry", body)
+    }
+
+    @ReactMethod
+    fun connectRemusBle(promise: Promise) {
+        val adapter = bluetoothAdapter
+        if (adapter == null || !reactContext.packageManager.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE)) {
+            promise.reject("BLE_UNSUPPORTED", "Bluetooth LE is not supported")
+            return
+        }
+        if (!canScanRemus()) {
+            promise.reject("BLE_PERMISSION", "Bluetooth scan/connect permission is required")
+            return
+        }
+        if (!adapter.isEnabled) {
+            promise.reject("BLE_DISABLED", "Bluetooth is disabled")
+            return
+        }
+        try {
+            if (!remusScanning) {
+                val filter = ScanFilter.Builder().setServiceUuid(ParcelUuid(remusServiceUuid)).build()
+                val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
+                adapter.bluetoothLeScanner.startScan(listOf(filter), settings, remusScanCallback)
+                remusScanning = true
+            }
+            sendRemusConnectionState("scanning")
+            promise.resolve(true)
+        } catch (error: Exception) {
+            promise.reject("BLE_SCAN_FAILED", error.message, error)
+        }
+    }
+
+    @ReactMethod
+    fun disconnectRemusBle(promise: Promise) {
+        try {
+            if (canScanRemus() && remusScanning) {
+                bluetoothAdapter?.bluetoothLeScanner?.stopScan(remusScanCallback)
+            }
+            remusScanning = false
+            remusGatt?.disconnect()
+            remusGatt?.close()
+            remusGatt = null
+            remusCharacteristic = null
+            sendRemusConnectionState("disconnected")
+            promise.resolve(true)
+        } catch (error: Exception) {
+            promise.reject("BLE_DISCONNECT_FAILED", error.message, error)
+        }
+    }
+
+    @ReactMethod
+    fun sendRemusBleCommand(command: String, promise: Promise) {
+        val gatt = remusGatt
+        val characteristic = remusCharacteristic
+        if (gatt == null || characteristic == null) {
+            promise.reject("BLE_NOT_CONNECTED", "REMUS device is not connected")
+            return
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            !hasBluetoothPermission(Manifest.permission.BLUETOOTH_CONNECT)) {
+            promise.reject("BLE_PERMISSION", "Bluetooth connect permission is required")
+            return
+        }
+        try {
+            val payload = command.toByteArray(Charsets.UTF_8)
+            val accepted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                gatt.writeCharacteristic(characteristic, payload, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) == 0
+            } else {
+                @Suppress("DEPRECATION")
+                characteristic.value = payload
+                @Suppress("DEPRECATION")
+                gatt.writeCharacteristic(characteristic)
+            }
+            if (accepted) promise.resolve(true)
+            else promise.reject("BLE_WRITE_FAILED", "Bluetooth write was not accepted")
+        } catch (error: Exception) {
+            promise.reject("BLE_WRITE_FAILED", error.message, error)
+        }
+    }
+
+    @ReactMethod
+    fun saveRemusSessionFile(recordingId: String, filename: String, base64: String, promise: Promise) {
+        try {
+            val data = Base64.decode(base64, Base64.DEFAULT)
+            val root = File(reactContext.filesDir, "RemusSessions")
+            val folder = RecordingContextStore.resolve(root, recordingId)
+            RecordingContextStore.read(folder)
+            val extension = if (filename.substringAfterLast('.', "").lowercase() == "bin") "bin" else "rbp2"
+            val destination = File(folder, "remus_sensor.$extension")
+            destination.writeBytes(data)
+            promise.resolve(destination.absolutePath)
+        } catch (error: Exception) {
+            promise.reject("REMUS_FILE_WRITE_FAILED", error.message, error)
+        }
+    }
 
     @ReactMethod
     fun playBeep(isLoud: Boolean, promise: Promise) {
@@ -1000,6 +1223,16 @@ class RemusTelemetryModule(private val reactContext: ReactApplicationContext) :
 
     override fun invalidate() {
         super.invalidate()
+        try {
+            if (canScanRemus() && remusScanning) {
+                bluetoothAdapter?.bluetoothLeScanner?.stopScan(remusScanCallback)
+            }
+            remusGatt?.disconnect()
+            remusGatt?.close()
+        } catch (_: Exception) {}
+        remusScanning = false
+        remusGatt = null
+        remusCharacteristic = null
         try {
             if (wakeLock?.isHeld == true) {
                 wakeLock?.release()

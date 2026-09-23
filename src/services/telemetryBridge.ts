@@ -48,15 +48,30 @@ export class TelemetryNativeBridge implements ITelemetryNativeBridge {
   async requestPermissions(): Promise<boolean> {
     if (Platform.OS === 'android') {
       try {
-        const granted = await PermissionsAndroid.requestMultiple([
+        const permissions = [
           PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
           PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION,
-        ]);
+        ];
+        if (Number(Platform.Version) >= 31) {
+          permissions.push(
+            PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+            PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT
+          );
+        }
+        const granted = await PermissionsAndroid.requestMultiple(permissions);
+        const fineLocationGranted =
+          granted[PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION] === PermissionsAndroid.RESULTS.GRANTED;
+        const bluetoothGranted = Number(Platform.Version) < 31
+          ? fineLocationGranted
+          : granted[PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN] === PermissionsAndroid.RESULTS.GRANTED &&
+            granted[PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT] === PermissionsAndroid.RESULTS.GRANTED;
         return (
-          granted[PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION] ===
+          bluetoothGranted && (
+            granted[PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION] ===
             PermissionsAndroid.RESULTS.GRANTED ||
-          granted[PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION] ===
+            granted[PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION] ===
             PermissionsAndroid.RESULTS.GRANTED
+          )
         );
       } catch (err) {
         console.warn('Failed to request android permissions', err);

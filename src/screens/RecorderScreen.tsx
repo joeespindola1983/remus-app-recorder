@@ -380,8 +380,8 @@ export const RecorderScreen: React.FC<RecorderScreenProps> = ({ onRecordingChang
     setIsPaused(false);
     setSprintMenuOpen(false);
 
-    // Finaliza e fecha o arquivo no MicroSD do sensor Remus
-    remusDeviceService.stopWorkout().catch(() => {});
+    // Finaliza e fecha o arquivo no MicroSD antes de solicitar a cópia íntegra.
+    const remusStopped = await remusDeviceService.stopWorkout().catch(() => false);
 
     try {
       // Finaliza a sessão do celular instantaneamente
@@ -393,6 +393,17 @@ export const RecorderScreen: React.FC<RecorderScreenProps> = ({ onRecordingChang
         motionSampleCount: manifest.motionSampleCount,
         locationSampleCount: manifest.locationSampleCount,
       }).catch(() => {});
+
+      if (remusStopped) {
+        // A cópia ocorre após o fechamento local e não bloqueia a finalização
+        // do treino do telefone. O arquivo só é anexado após cobertura + CRC.
+        new Promise(resolve => setTimeout(resolve, 350))
+          .then(() => remusDeviceService.downloadSessionFile())
+          .then(file => remusDeviceService.persistDownloadedFile(manifest.id, file))
+          .catch(error => {
+            console.warn('[RecorderScreen] Falha ao anexar RBP do Remus:', error);
+          });
+      }
 
       resetScreenState();
     } catch (err: any) {
