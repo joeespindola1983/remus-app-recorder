@@ -533,7 +533,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = remusapprecorder/remusapprecorder.entitlements;
-				CURRENT_PROJECT_VERSION = 13;
+				CURRENT_PROJECT_VERSION = 14;
 				DEVELOPMENT_TEAM = V6JPGVRWCS;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = remusapprecorder/Info.plist;
@@ -542,7 +542,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.6.0;
+				MARKETING_VERSION = 2.6.1;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -566,7 +566,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = remusapprecorder/remusapprecorder.entitlements;
-				CURRENT_PROJECT_VERSION = 13;
+				CURRENT_PROJECT_VERSION = 14;
 				DEVELOPMENT_TEAM = V6JPGVRWCS;
 				INFOPLIST_FILE = remusapprecorder/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
@@ -574,7 +574,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.6.0;
+				MARKETING_VERSION = 2.6.1;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -749,11 +749,11 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = RemusWatch/RemusWatch.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 13;
+				CURRENT_PROJECT_VERSION = 14;
 				DEVELOPMENT_TEAM = V6JPGVRWCS;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = RemusWatch/Info.plist;
-				MARKETING_VERSION = 2.6.0;
+				MARKETING_VERSION = 2.6.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.espindola.remus.recorder.watch;
 				PRODUCT_NAME = RemusWatch;
 				SDKROOT = watchos;
@@ -773,11 +773,11 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = RemusWatch/RemusWatch.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 13;
+				CURRENT_PROJECT_VERSION = 14;
 				DEVELOPMENT_TEAM = V6JPGVRWCS;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = RemusWatch/Info.plist;
-				MARKETING_VERSION = 2.6.0;
+				MARKETING_VERSION = 2.6.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.espindola.remus.recorder.watch;
 				PRODUCT_NAME = RemusWatch;
 				SDKROOT = watchos;

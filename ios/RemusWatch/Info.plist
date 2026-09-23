@@ -17,9 +17,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>2.6.0</string>
+	<string>2.6.1</string>
 	<key>CFBundleVersion</key>
-	<string>13</string>
+	<string>14</string>
 	<key>NSHealthShareUsageDescription</key>
 	<string>O Remus lê sua frequência cardíaca, energia ativa e distância durante os treinos de remo.</string>
 	<key>NSHealthUpdateUsageDescription</key>
