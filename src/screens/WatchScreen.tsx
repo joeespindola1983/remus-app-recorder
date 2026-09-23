@@ -14,27 +14,6 @@ import { t } from '../i18n';
 const { RemusTelemetryModule } = NativeModules;
 
 export const WatchScreen: React.FC = () => {
-  const [isRecovering, setIsRecovering] = useState(false);
-  const [statusMessage, setStatusMessage] = useState('');
-
-  const handleRecover = async () => {
-    setIsRecovering(true);
-    setStatusMessage('Solicitando dados pendentes do relógio...');
-    try {
-      if (RemusTelemetryModule && RemusTelemetryModule.requestWatchRecovery) {
-        await RemusTelemetryModule.requestWatchRecovery();
-        setStatusMessage('Sinal de recuperação enviado ao Apple Watch.');
-      } else {
-        setStatusMessage('Módulo nativo pronto. Aguardando sincronização automática.');
-      }
-      Alert.alert(t('common.success'), t('watch.syncTip'));
-    } catch (err: any) {
-      Alert.alert(t('common.error'), err.message || 'Falha na recuperação');
-    } finally {
-      setIsRecovering(false);
-    }
-  };
-
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.title}>{t('watch.title')}</Text>
@@ -54,36 +33,17 @@ export const WatchScreen: React.FC = () => {
 
       {/* Sync Info Card */}
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Sincronização em Segundo Plano</Text>
+        <Text style={styles.cardTitle}>{t('watch.syncTitle')}</Text>
         <Text style={styles.infoText}>{t('watch.syncTip')}</Text>
-
-        <TouchableOpacity
-          style={[styles.actionButton, isRecovering && styles.actionButtonDisabled]}
-          onPress={handleRecover}
-          disabled={isRecovering}
-        >
-          <Text style={styles.actionButtonText}>
-            {isRecovering ? 'Sincronizando...' : t('watch.recover')}
-          </Text>
-        </TouchableOpacity>
-
-        {statusMessage ? (
-          <Text style={styles.feedbackText}>{statusMessage}</Text>
-        ) : null}
       </View>
 
       {/* Guide Card */}
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Dica de Uso no Apple Watch</Text>
-        <Text style={styles.guideText}>
-          1. Abra o app <Text style={styles.bold}>Remus Watch</Text> no seu Apple Watch.
-        </Text>
-        <Text style={styles.guideText}>
-          2. Conceda as permissões de Saúde (HealthKit) e Movimento quando solicitado.
-        </Text>
-        <Text style={styles.guideText}>
-          3. Você pode iniciar a gravação diretamente pelo relógio ou pelo celular. Ao parar, os arquivos sqlite de ambos os dispositivos são agrupados na mesma sessão.
-        </Text>
+        <Text style={styles.cardTitle}>{t('watch.guideTitle')}</Text>
+        <Text style={styles.guideText}>{t('watch.guideStep1')}</Text>
+        <Text style={styles.guideText}>{t('watch.guideStep2')}</Text>
+        <Text style={styles.guideText}>{t('watch.guideStep3')}</Text>
+        <Text style={[styles.guideText, styles.guideTip]}>{t('watch.guidePermissionsTip')}</Text>
       </View>
     </ScrollView>
   );
@@ -164,6 +124,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
     marginBottom: 8
+  },
+  guideTip: {
+    color: '#38BDF8',
+    fontSize: 12,
+    marginTop: 6
   },
   bold: {
     color: '#F8FAFC',

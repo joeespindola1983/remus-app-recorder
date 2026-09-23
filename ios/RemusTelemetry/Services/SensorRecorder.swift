@@ -88,6 +88,7 @@ final class SensorRecorder: NSObject, ObservableObject {
     var isRecording: Bool { state == .recording }
 
     private var pendingMetadata: SessionMetadata?
+    private var watchStartRequestID: String?
 
     func start(metadata: SessionMetadata? = nil) {
         guard !isRecording, !isRequestingLocationPermission else { return }
@@ -288,7 +289,17 @@ final class SensorRecorder: NSObject, ObservableObject {
     }
 
     private func startWorkoutOnWatch() {
-        watchWorkoutStatus = "Waking Apple Watch…"
+        let requestID = UUID().uuidString
+        watchStartRequestID = requestID
+        let phoneSessionID = pendingMetadata?.sessionID.uuidString
+        var payload: [String: Any] = [
+            "protocolVersion": "1.0.0",
+            "command": "startWorkout",
+            "startRequestID": requestID,
+            "requestedAt": Date().timeIntervalSince1970
+        ]
+        if let phoneSessionID { payload["phoneSessionID"] = phoneSessionID }
+        watchWorkoutStatus = "Waiting for Apple Watch confirmation…"
         let configuration = HKWorkoutConfiguration()
         configuration.activityType = .rowing
         configuration.locationType = .outdoor
@@ -298,9 +309,31 @@ final class SensorRecorder: NSObject, ObservableObject {
             do {
                 try await healthStore.startWatchApp(toHandle: configuration)
                 guard isRecording else { return }
-                watchWorkoutStatus = "Start request delivered to Apple Watch"
+                watchWorkoutStatus = "Apple Watch opened · waiting for recording confirmation"
             } catch {
                 watchWorkoutStatus = "Watch did not start: \(error.localizedDescription)"
+            }
+        }
+
+        if WCSession.isSupported() {
+            let session = WCSession.default
+            try? session.updateApplicationContext(payload)
+            session.transferUserInfo(payload)
+            if session.activationState == .activated {
+                if session.isReachable {
+                    session.sendMessage(payload) { [weak self] reply in
+                        let state = reply["recordingState"] as? String ?? "starting"
+                        Task { @MainActor in
+                            self?.watchWorkoutStatus = state == "recording"
+                                ? "Apple Watch confirmed recording"
+                                : "Apple Watch accepted start request"
+                        }
+                    } errorHandler: { [weak self] error in
+                        Task { @MainActor in
+                            self?.watchWorkoutStatus = "Watch start queued · \(error.localizedDescription)"
+                        }
+                    }
+                }
             }
         }
     }
@@ -313,7 +346,13 @@ final class SensorRecorder: NSObject, ObservableObject {
             return
         }
         
-        let payload = ["command": "stopWorkout"]
+        var payload: [String: Any] = [
+            "protocolVersion": "1.0.0",
+            "command": "stopAndSendRecording",
+            "requestedAt": Date().timeIntervalSince1970
+        ]
+        if let id = pendingMetadata?.sessionID.uuidString { payload["phoneSessionID"] = id }
+        if let watchStartRequestID { payload["startRequestID"] = watchStartRequestID }
         
         if session.isReachable {
             session.sendMessage(payload, replyHandler: nil) { [weak self] error in

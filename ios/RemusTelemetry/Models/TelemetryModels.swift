@@ -253,9 +253,11 @@ struct RecordingSession: Identifiable, Equatable {
     }
 
     var hasWatchRecording: Bool {
+        let watchCsv = folderURL.appendingPathComponent("watch.csv")
+        if FileManager.default.fileExists(atPath: watchCsv.path) { return true }
         let folder = folderURL.appendingPathComponent("watch", isDirectory: true)
         return ((try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [])
-            .contains { $0.pathExtension.lowercased() == "zip" }
+            .contains { $0.pathExtension.lowercased() == "zip" || $0.pathExtension.lowercased() == "csv" }
     }
 }
 

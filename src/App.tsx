@@ -9,9 +9,11 @@ import {
 } from 'react-native';
 import { RecorderScreen } from './screens/RecorderScreen';
 import { SessionsScreen } from './screens/SessionsScreen';
+import { DeviceScreen } from './screens/DeviceScreen';
+import { t } from './i18n';
 
 export const App = () => {
-  const [currentTab, setCurrentTab] = useState<'record' | 'sessions'>('record');
+  const [currentTab, setCurrentTab] = useState<'record' | 'sessions' | 'device'>('record');
   const [isRecording, setIsRecording] = useState(false);
 
   return (
@@ -21,6 +23,7 @@ export const App = () => {
       <View style={styles.content}>
         {currentTab === 'record' && <RecorderScreen onRecordingChange={setIsRecording} />}
         {currentTab === 'sessions' && <SessionsScreen />}
+        {currentTab === 'device' && <DeviceScreen />}
       </View>
 
       {!isRecording && (
@@ -40,6 +43,15 @@ export const App = () => {
           >
             <Text style={[styles.navText, currentTab === 'sessions' && styles.navTextActive]}>
               ≡ Sessões
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.navTab, currentTab === 'device' && styles.navTabActive]}
+            onPress={() => setCurrentTab('device')}
+          >
+            <Text style={[styles.navText, currentTab === 'device' && styles.navTextActive]}>
+              📡 {t('tabs.device')}
             </Text>
           </TouchableOpacity>
         </View>

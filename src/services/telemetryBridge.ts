@@ -22,6 +22,14 @@ export interface ActiveRecordingState {
   motionSampleCount?: number;
 }
 
+export interface WatchTransferProgressEvent {
+  percentage: number;
+  progress: number;
+  status: 'waiting' | 'transferring' | 'completed' | 'failed';
+  sessionID?: string;
+  error?: string;
+}
+
 export interface ITelemetryNativeBridge {
   requestPermissions(): Promise<boolean>;
   startRecording(params: StartRecordingParams): Promise<StartRecordingResult>;
@@ -31,6 +39,7 @@ export interface ITelemetryNativeBridge {
   deleteSession(sessionId: string): Promise<boolean>;
   exportSessionZip(sessionId: string): Promise<string>;
   playBeep(isLoud: boolean): Promise<void>;
+  requestWatchStopAndTransfer(timeoutMs?: number): Promise<boolean>;
 }
 
 const { RemusTelemetryModule } = NativeModules;
@@ -125,6 +134,17 @@ export class TelemetryNativeBridge implements ITelemetryNativeBridge {
     if (RemusTelemetryModule && RemusTelemetryModule.playBeep) {
       await RemusTelemetryModule.playBeep(isLoud);
     }
+  }
+
+  async requestWatchStopAndTransfer(_timeoutMs = 15000): Promise<boolean> {
+    if (Platform.OS === 'ios' && RemusTelemetryModule && RemusTelemetryModule.requestWatchStopAndTransfer) {
+      try {
+        return await RemusTelemetryModule.requestWatchStopAndTransfer();
+      } catch {
+        return true;
+      }
+    }
+    return true;
   }
 }
 

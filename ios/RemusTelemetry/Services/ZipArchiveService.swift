@@ -26,7 +26,13 @@ extension RecordingSession: TelemetryArchiveSession {
         relativePath == "manifest.json" ||
         relativePath == "recording-context.json" ||
         relativePath == "telemetry.sqlite" ||
-        relativePath.hasPrefix("watch/")
+        relativePath == "remus_device.csv" ||
+        relativePath == "watch.csv" ||
+        relativePath.hasPrefix("watch/") ||
+        relativePath.lowercased().contains("watch") ||
+        relativePath.hasSuffix(".csv") ||
+        relativePath.hasSuffix(".json") ||
+        relativePath.hasSuffix(".sqlite")
     }
 }
 #endif
@@ -219,7 +225,17 @@ enum ZipArchiveService {
     }
 
     private static func relativePath(of file: URL, inside folder: URL) -> String {
-        String(file.path.dropFirst(folder.path.count + 1))
+        let filePath = file.resolvingSymlinksInPath().path
+        let folderPath = folder.resolvingSymlinksInPath().path
+        if filePath.hasPrefix(folderPath) {
+            let dropped = filePath.dropFirst(folderPath.count)
+            return String(dropped.drop(while: { $0 == "/" }))
+        }
+        if file.path.hasPrefix(folder.path) {
+            let dropped = file.path.dropFirst(folder.path.count)
+            return String(dropped.drop(while: { $0 == "/" }))
+        }
+        return file.lastPathComponent
     }
 
     private static func compress(_ url: URL, to output: FileHandle) throws -> CompressionResult {

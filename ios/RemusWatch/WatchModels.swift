@@ -50,6 +50,10 @@ struct WatchManifest: Codable {
     var healthSampleCount: Int
     var deviceSampleCount: Int
     let databaseFilename: String
+    /// Correlates this Watch archive with the phone recording that requested it.
+    /// Optional so archives created by older builds remain decodable.
+    var phoneSessionID: UUID? = nil
+    var startRequestID: String? = nil
 }
 
 struct WatchRecordingSession: TelemetryArchiveSession {

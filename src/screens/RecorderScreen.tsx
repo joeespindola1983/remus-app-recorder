@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,9 @@ import {
   NativeEventEmitter,
   NativeModules,
   useWindowDimensions,
+  Modal,
+  ActivityIndicator,
+  LayoutAnimation,
 } from 'react-native';
 import { t } from '../i18n';
 import { SensorPlacement } from '../types/telemetry';
@@ -19,7 +22,12 @@ import { analyticsService } from '../services/analyticsService';
 import { RecordingContextForm } from './RecordingContextForm';
 import { normalizeTelemetryEvent, resolveStrokeRateDisplay } from '../contracts/telemetryContract';
 import { getRecordingState } from '../contracts/bridgeContract';
-import { getGpsSignalLevel, resolveHeartRateDisplay } from '../utils/dashboardIndicators';
+import { getGpsSignalLevel, resolveHeartRateDisplay, formatRemusGpsBadge } from '../utils/dashboardIndicators';
+import {
+  remusDeviceService,
+  RemusConnectionState,
+} from '../services/remusDeviceService';
+import { RemusDeviceTelemetry } from '../contracts/remusDeviceContract';
 
 const sessionManager = new SessionManager(telemetryBridge);
 const { RemusTelemetryModule } = NativeModules;
@@ -156,6 +164,29 @@ export const RecorderScreen: React.FC<RecorderScreenProps> = ({ onRecordingChang
   const [lastHeartRate, setLastHeartRate] = useState<{value: number, timestamp: number} | null>(null);
   const [lastAvailableSpm, setLastAvailableSpm] = useState<{value: number, timestamp: number} | null>(null);
   const [isWatchActive, setIsWatchActive] = useState(false);
+  const [remusConnectionState, setRemusConnectionState] = useState<RemusConnectionState>(
+    remusDeviceService.getConnectionState()
+  );
+  const [remusTelemetry, setRemusTelemetry] = useState<RemusDeviceTelemetry | null>(
+    remusDeviceService.getLatestTelemetry()
+  );
+
+  useEffect(() => {
+    remusDeviceService.ensureConnection().catch(() => {});
+
+    const unsubConn = remusDeviceService.subscribeConnection((state) => {
+      setRemusConnectionState(state);
+    });
+
+    const unsubTelem = remusDeviceService.subscribe((telem) => {
+      setRemusTelemetry(telem);
+    });
+
+    return () => {
+      unsubConn();
+      unsubTelem();
+    };
+  }, []);
 
   const resetScreenState = () => {
     setDuration(0);
@@ -213,13 +244,15 @@ export const RecorderScreen: React.FC<RecorderScreenProps> = ({ onRecordingChang
         if (data.watchActive !== undefined) {
           setIsWatchActive(Boolean(data.watchActive));
         }
-        if (data.heartRateBpm !== undefined && data.heartRateBpm !== null) {
-          setLastHeartRate({ value: data.heartRateBpm as number, timestamp: Date.now() });
+        const rawHr = data.heartRateBpm ?? (data as any).heartRate ?? normalized.heartRateBeatsPerMinute;
+        if (rawHr !== undefined && rawHr !== null && Number(rawHr) > 0) {
+          setLastHeartRate({ value: Number(rawHr), timestamp: Date.now() });
           setIsWatchActive(true);
         }
         return { ...prev, ...normalized };
       });
     });
+
     return () => {
       subscription.remove();
     };
@@ -308,6 +341,7 @@ export const RecorderScreen: React.FC<RecorderScreenProps> = ({ onRecordingChang
     if (transitioning) return;
     setTransitioning(true);
     try {
+      remusDeviceService.ensureConnection().catch(() => {});
       await sessionManager.restore();
       await telemetryBridge.requestPermissions();
       const res = await sessionManager.start({
@@ -322,6 +356,10 @@ export const RecorderScreen: React.FC<RecorderScreenProps> = ({ onRecordingChang
       setSprintMenuOpen(false);
       setDuration(0);
       setMetrics(prev => ({...prev, strokeRateSpm: null, strokeRateStatus: 'collecting', strokeRateProgress: 0}));
+
+      // Inicia a gravação a 200 Hz no MicroSD do sensor Remus
+      remusDeviceService.startWorkout().catch(() => {});
+
       await analyticsService.logRecordingStarted({
         sessionId: res.sessionId,
         sensorProfile: placement,
@@ -337,22 +375,30 @@ export const RecorderScreen: React.FC<RecorderScreenProps> = ({ onRecordingChang
   const handleStop = async () => {
     if (transitioning) return;
     setTransitioning(true);
+
+    setIsRecording(false);
+    setIsPaused(false);
+    setSprintMenuOpen(false);
+
+    // Finaliza e fecha o arquivo no MicroSD do sensor Remus
+    remusDeviceService.stopWorkout().catch(() => {});
+
     try {
+      // Finaliza a sessão do celular instantaneamente
       const manifest = await sessionManager.stop();
-      setIsRecording(false);
-      setIsPaused(false);
-      setSprintMenuOpen(false);
       setPendingRecordingId(manifest.id);
-      await analyticsService.logRecordingStopped({
+      analyticsService.logRecordingStopped({
         sessionId: manifest.id,
         durationSeconds: duration,
         motionSampleCount: manifest.motionSampleCount,
         locationSampleCount: manifest.locationSampleCount,
-      });
+      }).catch(() => {});
+
       resetScreenState();
     } catch (err: any) {
       console.error(err);
       analyticsService.recordError(err, 'RecorderScreen:handleStop');
+      resetScreenState();
     } finally {
       setTransitioning(false);
     }
@@ -390,7 +436,7 @@ export const RecorderScreen: React.FC<RecorderScreenProps> = ({ onRecordingChang
 
   const hrDisplay = resolveHeartRateDisplay({
     isWatchActive,
-    lastHeartRate,
+    lastHeartRate: lastHeartRate ?? (metrics.heartRateBeatsPerMinute != null ? { value: metrics.heartRateBeatsPerMinute, timestamp: Date.now() } : null),
     now: Date.now(),
   });
 
@@ -414,6 +460,8 @@ export const RecorderScreen: React.FC<RecorderScreenProps> = ({ onRecordingChang
 
   return (
     <SafeAreaView style={[styles.safeArea, isRecording && styles.safeAreaRecording]}>
+
+
       {pendingRecordingId && (
         <RecordingContextForm 
           recordingId={pendingRecordingId} 
@@ -461,6 +509,36 @@ export const RecorderScreen: React.FC<RecorderScreenProps> = ({ onRecordingChang
                   <Text style={styles.bigStartText}>{t('recording.start')}</Text>
                 </TouchableOpacity>
 
+                {/* REMUS Hardware Auto-Detect Status in Idle */}
+                <View style={styles.remusIdleContainer}>
+                  <View
+                    style={[
+                      styles.remusDot,
+                      remusConnectionState === 'connected'
+                        ? (remusTelemetry?.gps.fix ? styles.remusDotConnected : styles.remusDotWarning)
+                        : remusConnectionState === 'scanning' || remusConnectionState === 'connecting'
+                        ? styles.remusDotScanning
+                        : styles.remusDotIdle,
+                    ]}
+                  />
+                  <Text style={styles.remusIdleText}>
+                    {remusConnectionState === 'connected'
+                      ? (remusTelemetry?.gps.fix
+                          ? t('recorder.remus.connectedLockedDetail', {
+                              count: remusTelemetry.gps.satellitesInUse || remusTelemetry.gps.satellitesInView,
+                              accuracy: remusTelemetry.gps.accuracyMeters != null && remusTelemetry.gps.accuracyMeters > 0
+                                ? `${Math.round(remusTelemetry.gps.accuracyMeters)}m`
+                                : '3D',
+                            })
+                          : t('recorder.remus.connectedSearchingDetail', {
+                              count: remusTelemetry?.gps.satellitesInUse || remusTelemetry?.gps.satellitesInView || 0,
+                            }))
+                      : remusConnectionState === 'scanning' || remusConnectionState === 'connecting'
+                      ? t('recorder.remus.searching')
+                      : t('recorder.remus.disconnected')}
+                  </Text>
+                </View>
+
                 <Text style={styles.idleTip}>{t('recording.screenOffTip')}</Text>
               </View>
             </View>
@@ -483,10 +561,50 @@ export const RecorderScreen: React.FC<RecorderScreenProps> = ({ onRecordingChang
                       : (isPaused ? 'PAUSADO' : '● GRAVANDO')}
                 </Text>
                 <View style={styles.scIndicatorsRow}>
+                  {/* REMUS Hardware Indicator: GREEN only when 3D fix locked, AMBER when searching */}
+                  <View
+                    style={[
+                      styles.remusIndicatorBadge,
+                      remusConnectionState === 'connected'
+                        ? (remusTelemetry?.gps.fix
+                            ? styles.remusIndicatorBadgeConnected
+                            : styles.remusIndicatorBadgeWarning)
+                        : styles.remusIndicatorBadgeIdle,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.remusIndicatorText,
+                        remusConnectionState === 'connected'
+                          ? (remusTelemetry?.gps.fix
+                              ? styles.remusIndicatorTextConnected
+                              : styles.remusIndicatorTextWarning)
+                          : styles.remusIndicatorTextIdle,
+                      ]}
+                    >
+                      {remusConnectionState === 'connected'
+                        ? formatRemusGpsBadge({
+                            satellites: remusTelemetry?.gps.satellitesInUse || remusTelemetry?.gps.satellitesInView || 0,
+                            accuracyMeters: remusTelemetry?.gps.accuracyMeters,
+                            fix: remusTelemetry?.gps.fix,
+                            searchingLabel: t('recorder.remus.searchingGps'),
+                          })
+                        : remusConnectionState === 'scanning' || remusConnectionState === 'connecting'
+                        ? '📡 …'
+                        : '📡 Off'}
+                    </Text>
+                  </View>
+
                   <Text style={[styles.hrText, { color: hrDisplay.color }]}>
                     {hrDisplay.icon} {hrDisplay.value}
                   </Text>
-                  <GpsSignalIndicator accuracyMeters={metrics.horizontalAccuracyMeters} />
+                  <GpsSignalIndicator
+                    accuracyMeters={
+                      remusConnectionState === 'connected' && remusTelemetry?.gps.accuracyMeters != null
+                        ? remusTelemetry.gps.accuracyMeters
+                        : metrics.horizontalAccuracyMeters
+                    }
+                  />
                   <Text style={styles.batteryText}>🔋</Text>
                 </View>
               </View>
@@ -523,11 +641,17 @@ export const RecorderScreen: React.FC<RecorderScreenProps> = ({ onRecordingChang
                     styles.scValueBig,
                     activeSprint && styles.scValueBigSprint,
                     isPaused && styles.scValueBigPaused,
-                    isCollectingSpm && styles.scValueCollecting,
+                    (isCollectingSpm && !remusTelemetry?.strokeRateSpm) && styles.scValueCollecting,
                   ]} adjustsFontSizeToFit numberOfLines={1}>
-                    {spmDisplay.value !== null ? spmDisplay.value.toFixed(0) : (isCollectingSpm ? '—' : '0')}
+                    {remusTelemetry?.strokeRateSpm != null
+                      ? remusTelemetry.strokeRateSpm.toFixed(0)
+                      : (spmDisplay.value !== null ? spmDisplay.value.toFixed(0) : (isCollectingSpm ? '—' : '0'))}
                   </Text>
-                  {isCollectingSpm ? (
+                  {remusTelemetry?.strokeRateSpm != null ? (
+                    <Text style={[styles.scSubStatus, { color: '#4ADE80' }]}>
+                      REMUS
+                    </Text>
+                  ) : isCollectingSpm ? (
                     <Text style={[styles.scSubStatus, activeSprint && styles.scLabelSprint, isPaused && styles.scLabelPaused]}>
                       {t('recorder.spm.collectingStatus')}
                     </Text>
@@ -940,6 +1064,74 @@ const styles = StyleSheet.create({
   batteryText: {
     fontSize: 12,
   },
+  remusIndicatorBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  remusIndicatorBadgeConnected: {
+    backgroundColor: '#14532D',
+    borderColor: '#22C55E',
+  },
+  remusIndicatorBadgeWarning: {
+    backgroundColor: '#78350F',
+    borderColor: '#F59E0B',
+  },
+  remusIndicatorBadgeIdle: {
+    backgroundColor: '#1E293B',
+    borderColor: '#334155',
+  },
+  remusIndicatorText: {
+    fontSize: 11,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
+  },
+  remusIndicatorTextConnected: {
+    color: '#4ADE80',
+  },
+  remusIndicatorTextWarning: {
+    color: '#FBBF24',
+  },
+  remusIndicatorTextIdle: {
+    color: '#64748B',
+  },
+  remusIdleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: '#1E293B',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  remusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  remusDotConnected: {
+    backgroundColor: '#22C55E',
+  },
+  remusDotWarning: {
+    backgroundColor: '#F59E0B',
+  },
+  remusDotScanning: {
+    backgroundColor: '#F59E0B',
+  },
+  remusDotIdle: {
+    backgroundColor: '#64748B',
+  },
+  remusIdleText: {
+    fontSize: 12,
+    color: '#94A3B8',
+    fontWeight: '600',
+  },
   scValueCollecting: {
     color: '#94A3B8',
   },
@@ -974,12 +1166,14 @@ const styles = StyleSheet.create({
     borderBottomColor: '#000000',
   },
   scValueBig: {
-    fontSize: 54,
+    fontSize: 64, // Increase slightly for landscape but scale down
     fontWeight: '900',
     color: '#000000',
     fontVariant: ['tabular-nums'],
     letterSpacing: -2,
-    lineHeight: 60,
+    textAlign: 'center',
+    width: '100%',
+    // Removed fixed lineHeight to fix clipping with adjustsFontSizeToFit
   },
   scLabel: {
     fontSize: 12,
@@ -1343,5 +1537,96 @@ const styles = StyleSheet.create({
   metricUnit: {
     color: '#64748B',
     fontSize: 10,
+  },
+
+  /* Watch Transfer Compact Card */
+  transferModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.88)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  transferModalContainer: {
+    width: '100%',
+    maxWidth: 290,
+    backgroundColor: '#1E293B',
+    borderRadius: 18,
+    paddingVertical: 22,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#334155',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.45,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  transferIconBadge: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(56, 189, 248, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.3)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  transferIconText: {
+    fontSize: 22,
+    color: '#38BDF8',
+  },
+  transferModalTitle: {
+    color: '#F8FAFC',
+    fontSize: 15,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginBottom: 14,
+  },
+  transferProgressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: '100%',
+    gap: 10,
+  },
+  transferProgressBarTrack: {
+    flex: 1,
+    height: 8,
+    backgroundColor: '#0F172A',
+    borderRadius: 4,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  transferProgressBarFill: {
+    height: '100%',
+    backgroundColor: '#38BDF8',
+    borderRadius: 4,
+  },
+  transferProgressBarFillSuccess: {
+    backgroundColor: '#4ADE80',
+  },
+  transferPercentageText: {
+    color: '#38BDF8',
+    fontSize: 14,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+    width: 40,
+    textAlign: 'right',
+  },
+  transferPercentageSuccess: {
+    color: '#4ADE80',
+  },
+  transferSkipButton: {
+    marginTop: 14,
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+  },
+  transferSkipButtonText: {
+    color: '#94A3B8',
+    fontSize: 13,
+    fontWeight: '500',
   },
 });

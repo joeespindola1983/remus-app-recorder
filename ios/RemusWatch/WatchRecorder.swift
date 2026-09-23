@@ -27,9 +27,12 @@ final class WatchRecorder: NSObject, ObservableObject {
     @Published private(set) var distanceMeters: Double?
     @Published private(set) var gpsAccuracyMeters: Double?
     @Published private(set) var batteryLevel: Double?
+    @Published private(set) var strokeRateSpm: Double?
+    @Published private(set) var speedMetersPerSecond: Double?
+    @Published private(set) var splitSeconds: Double?
     @Published private(set) var queuedWrites = 0
     @Published private(set) var status = "Ready"
-    @Published private(set) var transferStatus = "No recording waiting"
+    @Published private(set) var transferStatus = "Ready to record"
     @Published private(set) var permissionStatus = "Health permissions not requested"
 
     private let healthStore = HKHealthStore()
@@ -57,6 +60,14 @@ final class WatchRecorder: NSObject, ObservableObject {
     private var companionWorkoutConfiguration: HKWorkoutConfiguration?
     private var motionStartAttempt = 0
     private var motionWatchdog: Task<Void, Never>?
+    private var telemetryTimer: Timer?
+    private var lastTelemetryPublish: TimeInterval = 0
+    private var latestMotion: CMDeviceMotion?
+    private var latestLocation: CLLocation?
+    private var phoneSessionID: UUID?
+    private var startRequestID: String?
+    private var watchSessionID: UUID?
+    private static let sequenceKey = "remus.watch.telemetry.sequence"
 
     override init() {
         super.init()
@@ -75,13 +86,26 @@ final class WatchRecorder: NSObject, ObservableObject {
 
     func start() {
         companionWorkoutConfiguration = nil
+        phoneSessionID = nil
+        startRequestID = nil
         startRequest()
     }
 
     func startFromCompanion(_ configuration: HKWorkoutConfiguration) {
+        NSLog("[WatchRecorder] startFromCompanion: state=%@", String(describing: self.state))
         guard state == .idle || isFailed else {
             publishRecordingState(isRecording ? "recording" : "busy")
             return
+        }
+        phoneSessionID = nil
+        startRequestID = nil
+        if WCSession.isSupported() {
+            let context = WCSession.default.receivedApplicationContext
+            let requestedAt = (context["requestedAt"] as? NSNumber)?.doubleValue
+            if (context["command"] as? String) == "startWorkout",
+               requestedAt.map({ abs(Date().timeIntervalSince1970 - $0) <= 300 }) == true {
+                applyCorrelation(from: context)
+            }
         }
         companionWorkoutConfiguration = configuration
         transferStatus = "Start requested by iPhone"
@@ -141,10 +165,13 @@ final class WatchRecorder: NSObject, ObservableObject {
         healthStore.requestAuthorization(toShare: shareTypes, read: readTypes) { [weak self] success, error in
             Task { @MainActor in
                 guard let self else { return }
+                NSLog("[WatchRecorder] requestAuthorization completed: success=%d error=%@", success ? 1 : 0, error?.localizedDescription ?? "nil")
                 guard success else {
                     self.failBeforeRecording(error?.localizedDescription ?? "Health authorization was not granted.")
                     return
                 }
+                let workoutAuth = self.healthStore.authorizationStatus(for: HKObjectType.workoutType())
+                NSLog("[WatchRecorder] workout authorization status: %ld (sharingDenied=1, sharingAuthorized=2)", workoutAuth.rawValue)
                 self.permissionStatus = "Health access requested · heart rate, energy, distance and workouts"
                 self.prepareLocationAuthorization()
             }
@@ -186,7 +213,7 @@ final class WatchRecorder: NSObject, ObservableObject {
         device.isBatteryMonitoringEnabled = true
         refreshBattery()
 
-        let manifest = WatchManifest(
+        var manifest = WatchManifest(
             id: UUID(),
             startedAt: startDate,
             endedAt: nil,
@@ -206,15 +233,30 @@ final class WatchRecorder: NSObject, ObservableObject {
             deviceSampleCount: 0,
             databaseFilename: "watch-telemetry.sqlite"
         )
+        manifest.phoneSessionID = phoneSessionID
+        manifest.startRequestID = startRequestID
+        watchSessionID = manifest.id
 
         do {
             _ = try writer.start(manifest: manifest)
             databaseStarted = true
-            try startWorkout(at: startDate)
+            try startWorkout(at: startDate) { [weak self] success, error in
+                Task { @MainActor in
+                    guard let self, self.state == .requestingPermissions else { return }
+                    guard success else {
+                        self.failBeforeRecording(error?.localizedDescription ?? "HealthKit did not begin collecting workout data.")
+                        return
+                    }
+                    self.completeBeginRecording(startDate: startDate, startUptime: startUptime)
+                }
+            }
         } catch {
             failBeforeRecording(error.localizedDescription)
-            return
         }
+    }
+
+    private func completeBeginRecording(startDate: Date, startUptime: TimeInterval) {
+        guard state == .requestingPermissions else { return }
 
         didFinalize = false
         startedAt = startDate
@@ -228,16 +270,25 @@ final class WatchRecorder: NSObject, ObservableObject {
         lastHeartRateTimestamp = nil
         activeEnergyKilocalories = nil
         distanceMeters = nil
+        latestMotion = nil
+        latestLocation = nil
+        lastTelemetryPublish = 0
         state = .recording
+        NSLog("[WatchRecorder] beginRecording successfully entered, state is .recording")
         status = "Recording locally · 50 Hz"
+        transferStatus = "Local recording active · live preview enabled"
         publishRecordingState("recording")
         startMotion()
         startLocationIfAuthorized()
         startAltimeter()
         recordDevice(at: startUptime)
+        telemetryTimer?.invalidate()
+        telemetryTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.publishTelemetry() }
+        }
     }
 
-    private func startWorkout(at date: Date) throws {
+    private func startWorkout(at date: Date, completion: @escaping @Sendable (Bool, Error?) -> Void) throws {
         let configuration = companionWorkoutConfiguration ?? HKWorkoutConfiguration()
         if companionWorkoutConfiguration == nil {
             configuration.activityType = .rowing
@@ -252,10 +303,7 @@ final class WatchRecorder: NSObject, ObservableObject {
         workoutSession = session
         workoutBuilder = builder
         session.startActivity(with: date)
-        builder.beginCollection(withStart: date) { [weak self] success, error in
-            guard !success, let error else { return }
-            Task { @MainActor in self?.fail(error.localizedDescription) }
-        }
+        builder.beginCollection(withStart: date, completion: completion)
     }
 
     private func startMotion() {
@@ -291,16 +339,22 @@ final class WatchRecorder: NSObject, ObservableObject {
             }
             count += 1
             if firstTimestamp == nil { firstTimestamp = motion.timestamp }
-            guard count.isMultiple(of: 25), let firstTimestamp else { return }
-            let rate = motion.timestamp > firstTimestamp ? Double(count - 1) / (motion.timestamp - firstTimestamp) : 0
+            let rate = (firstTimestamp != nil && motion.timestamp > firstTimestamp!) ? Double(count - 1) / (motion.timestamp - firstTimestamp!) : 0
             Task { @MainActor in
                 guard self.isRecording else { return }
-                self.elapsedSamples = count
-                self.measuredHertz = rate
-                self.queuedWrites = self.writer.queuedWriteCount
-                self.status = "Recording locally · \(rate.formatted(.number.precision(.fractionLength(1)))) Hz"
-                if self.lastDeviceSampleUptime.map({ motion.timestamp - $0 >= 60 }) ?? true {
-                    self.recordDevice(at: motion.timestamp)
+                self.latestMotion = motion
+                if count.isMultiple(of: 25) {
+                    self.elapsedSamples = count
+                    self.measuredHertz = rate
+                    self.queuedWrites = self.writer.queuedWriteCount
+                    self.status = "Recording locally · \(rate.formatted(.number.precision(.fractionLength(1)))) Hz"
+                    if self.lastDeviceSampleUptime.map({ motion.timestamp - $0 >= 60 }) ?? true {
+                        self.recordDevice(at: motion.timestamp)
+                    }
+                }
+                // Publish telemetry at 1 Hz
+                if count.isMultiple(of: 50) {
+                    self.publishTelemetry()
                 }
             }
         }
@@ -458,6 +512,8 @@ final class WatchRecorder: NSObject, ObservableObject {
     }
 
     private func stopSensors() {
+        telemetryTimer?.invalidate()
+        telemetryTimer = nil
         motionWatchdog?.cancel()
         motionWatchdog = nil
         motionManager.stopDeviceMotionUpdates()
@@ -473,6 +529,7 @@ final class WatchRecorder: NSObject, ObservableObject {
         didFinalize = true
         guard let recording = writer.stop(at: date, failureMessage: failureMessage) else {
             state = .failed("Could not finalize the Watch recording.")
+            publishRecordingState("failed", error: "Could not finalize the local Watch database.")
             return
         }
         databaseStarted = false
@@ -480,6 +537,8 @@ final class WatchRecorder: NSObject, ObservableObject {
         workoutBuilder = nil
         sessionStartUptime = nil
         queuedWrites = 0
+        latestMotion = nil
+        latestLocation = nil
         status = failureMessage == nil ? "Recording saved" : "Recording saved with an interruption"
         publishRecordingState(failureMessage == nil ? "saved" : "failed", error: failureMessage)
 
@@ -491,7 +550,7 @@ final class WatchRecorder: NSObject, ObservableObject {
                 enqueueTransfer(archive: archive, manifest: recording.manifest)
                 state = .idle
             } catch {
-                state = .failed("Recording saved, but ZIP creation failed: \(error.localizedDescription)")
+                state = .failed("Recording saved locally, but ZIP creation failed: \(error.localizedDescription)")
             }
         }
     }
@@ -506,12 +565,15 @@ final class WatchRecorder: NSObject, ObservableObject {
             transferStatus = "Saved locally · waiting for connection activation"
             return
         }
-        session.transferFile(archive, metadata: [
+        var metadata: [String: Any] = [
             "sessionID": manifest.id.uuidString,
             "startedAt": manifest.startedAt.timeIntervalSince1970,
             "endedAt": (manifest.endedAt ?? Date()).timeIntervalSince1970,
             "motionSampleCount": manifest.motionSampleCount
-        ])
+        ]
+        if let phoneSessionID = manifest.phoneSessionID { metadata["phoneSessionID"] = phoneSessionID.uuidString }
+        if let startRequestID = manifest.startRequestID { metadata["startRequestID"] = startRequestID }
+        session.transferFile(archive, metadata: metadata)
         transferStatus = "Queued for transfer to iPhone"
     }
 
@@ -521,7 +583,6 @@ final class WatchRecorder: NSObject, ObservableObject {
             return
         }
         transferStatus = "Preparing local recordings for transfer"
-
         Task {
             do {
                 let recordings = try await Task.detached(priority: .utility) {
@@ -569,35 +630,122 @@ final class WatchRecorder: NSObject, ObservableObject {
         session.activate()
     }
 
-    private var lastHeartRatePublish: TimeInterval = 0
-
-    private func publishHeartRate(_ value: Double) {
+    private func publishHeartRate(_ bpm: Double) {
         guard WCSession.isSupported() else { return }
         let now = Date().timeIntervalSince1970
-        guard now - lastHeartRatePublish >= 1.0 else { return }
-        lastHeartRatePublish = now
-        
-        let payload: [String: Any] = [
-            "heartRate": value,
+        var payload: [String: Any] = [
+            "protocolVersion": "1.0.0",
+            "type": "HEART_RATE_OBSERVATION",
+            "command": "heartRate",
+            "heartRate": bpm,
+            "heartRateBpm": bpm,
+            "timestamp": now,
+            "nativeTimestamp": Int64(now * 1000),
             "watchActive": true,
-            "updatedAt": now
+            "messageId": UUID().uuidString,
+            "sequence": nextSequence()
         ]
+        addCorrelation(to: &payload)
         let session = WCSession.default
+        if session.activationState != .activated {
+            session.activate()
+        }
+        try? session.updateApplicationContext(payload)
+        NSLog("[WatchRecorder] publishHeartRate: %.1f bpm, activation=%ld reachable=%d", bpm, session.activationState.rawValue, session.isReachable ? 1 : 0)
         if session.activationState == .activated {
             if session.isReachable {
-                session.sendMessage(payload, replyHandler: nil, errorHandler: nil)
+                session.sendMessage(payload, replyHandler: nil) { [weak session] error in
+                    NSLog("[WatchRecorder] sendMessage heartRate error: %@, falling back to transferUserInfo", error.localizedDescription)
+                    session?.transferUserInfo(payload)
+                }
+            } else {
+                session.transferUserInfo(payload)
             }
-            try? session.updateApplicationContext(payload)
+        }
+    }
+
+    private func publishTelemetry() {
+        guard WCSession.isSupported(), isRecording else { return }
+        let now = Date().timeIntervalSince1970
+        guard now - lastTelemetryPublish >= 0.95 else { return }
+        lastTelemetryPublish = now
+
+        let elapsed = sessionStartUptime.map { max(0, ProcessInfo.processInfo.systemUptime - $0) } ?? 0.0
+
+        var payload: [String: Any] = [
+            "protocolVersion": "1.0.0",
+            "type": "WATCH_TELEMETRY_OBSERVATION",
+            "command": "watchTelemetry",
+            "watchActive": true,
+            "timestamp": now,
+            "nativeTimestamp": Int64(now * 1000),
+            "elapsed": elapsed,
+            "messageId": UUID().uuidString,
+            "sequence": nextSequence()
+        ]
+        addCorrelation(to: &payload)
+
+        if let hr = heartRate, hr > 0 {
+            payload["heartRate"] = hr
+            payload["heartRateBpm"] = hr
+        }
+        if let motion = latestMotion {
+            payload["userAx"] = motion.userAcceleration.x
+            payload["userAy"] = motion.userAcceleration.y
+            payload["userAz"] = motion.userAcceleration.z
+            payload["gravityX"] = motion.gravity.x
+            payload["gravityY"] = motion.gravity.y
+            payload["gravityZ"] = motion.gravity.z
+            payload["rotationX"] = motion.rotationRate.x
+            payload["rotationY"] = motion.rotationRate.y
+            payload["rotationZ"] = motion.rotationRate.z
+            payload["roll"] = motion.attitude.roll
+            payload["pitch"] = motion.attitude.pitch
+            payload["yaw"] = motion.attitude.yaw
+        }
+        if let loc = latestLocation {
+            payload["latitude"] = loc.coordinate.latitude
+            payload["longitude"] = loc.coordinate.longitude
+            if loc.speed >= 0 { payload["speed"] = loc.speed }
+            if loc.horizontalAccuracy >= 0 { payload["accuracy"] = loc.horizontalAccuracy }
+        }
+        if let energy = activeEnergyKilocalories {
+            payload["activeEnergy"] = energy
+        }
+        if let batt = batteryLevel {
+            payload["battery"] = batt * 100.0
+        }
+
+        let session = WCSession.default
+        if session.activationState != .activated {
+            session.activate()
+        }
+        try? session.updateApplicationContext(payload)
+        NSLog("[WatchRecorder] publishTelemetry: activation=%ld reachable=%d hr=%@ elapsed=%.1f",
+              session.activationState.rawValue, session.isReachable ? 1 : 0, self.heartRate.map { String($0) } ?? "nil", elapsed)
+
+        if session.activationState == .activated {
+            if session.isReachable {
+                session.sendMessage(payload, replyHandler: nil) { [weak session] error in
+                    NSLog("[WatchRecorder] sendMessage error, fallback to transferUserInfo: %@", error.localizedDescription)
+                    session?.transferUserInfo(payload)
+                }
+            } else {
+                session.transferUserInfo(payload)
+            }
         }
     }
 
     private func publishRecordingState(_ recordingState: String, error: String? = nil, archiveCount: Int? = nil) {
         guard WCSession.isSupported() else { return }
         var payload: [String: Any] = [
+            "protocolVersion": "1.0.0",
+            "type": "WATCH_RECORDING_STATE",
             "recordingState": recordingState,
             "watchActive": recordingState == "recording",
             "updatedAt": Date().timeIntervalSince1970
         ]
+        addCorrelation(to: &payload)
         if let error { payload["error"] = error }
         if let archiveCount { payload["archiveCount"] = archiveCount }
         let session = WCSession.default
@@ -605,6 +753,19 @@ final class WatchRecorder: NSObject, ObservableObject {
         if session.activationState == .activated, session.isReachable {
             session.sendMessage(payload, replyHandler: nil, errorHandler: nil)
         }
+    }
+
+    private func addCorrelation(to payload: inout [String: Any]) {
+        if let phoneSessionID { payload["phoneSessionID"] = phoneSessionID.uuidString }
+        if let startRequestID { payload["startRequestID"] = startRequestID }
+        if let watchSessionID { payload["watchSessionID"] = watchSessionID.uuidString }
+    }
+
+    private func nextSequence() -> Int64 {
+        let defaults = UserDefaults.standard
+        let next = ((defaults.object(forKey: Self.sequenceKey) as? NSNumber)?.int64Value ?? 0) + 1
+        defaults.set(NSNumber(value: next), forKey: Self.sequenceKey)
+        return next
     }
 
     private func preferredReferenceFrame() -> CMAttitudeReferenceFrame {
@@ -634,12 +795,7 @@ final class WatchRecorder: NSObject, ObservableObject {
 
     private func elapsedForAltimeterTimestamp(_ timestamp: TimeInterval) -> TimeInterval? {
         let currentUptime = ProcessInfo.processInfo.systemUptime
-        if abs(timestamp - currentUptime) < 24 * 60 * 60 {
-            return elapsed(atUptime: timestamp)
-        }
-
-        // Some watchOS releases deliver CMAltitudeData timestamps using
-        // Date.timeIntervalSinceReferenceDate instead of system uptime.
+        if abs(timestamp - currentUptime) < 24 * 60 * 60 { return elapsed(atUptime: timestamp) }
         return elapsed(for: Date(timeIntervalSinceReferenceDate: timestamp))
     }
 
@@ -649,6 +805,7 @@ final class WatchRecorder: NSObject, ObservableObject {
             _ = writer.stop(at: Date(), failureMessage: message)
             databaseStarted = false
         }
+        publishRecordingState("failed", error: message)
         state = .failed(message)
         status = "Could not start"
     }
@@ -685,27 +842,38 @@ extension WatchRecorder: CLLocationManagerDelegate {
             for location in locations.sorted(by: { $0.timestamp < $1.timestamp }) where location.horizontalAccuracy >= 0 {
                 if let lastLocationTimestamp, location.timestamp.timeIntervalSince(lastLocationTimestamp) < 0.05 { continue }
                 lastLocationTimestamp = location.timestamp
-                guard let elapsed = elapsed(for: location.timestamp) else { continue }
+                latestLocation = location
                 gpsAccuracyMeters = location.horizontalAccuracy
-                let sample = WatchLocationSample(
-                    sourceTime: location.timestamp,
-                    latitude: location.coordinate.latitude,
-                    longitude: location.coordinate.longitude,
-                    altitude: location.verticalAccuracy >= 0 ? location.altitude : nil,
-                    horizontalAccuracy: location.horizontalAccuracy,
-                    verticalAccuracy: location.verticalAccuracy >= 0 ? location.verticalAccuracy : nil,
-                    speed: location.speed >= 0 ? location.speed : nil,
-                    speedAccuracy: location.speedAccuracy >= 0 ? location.speedAccuracy : nil,
-                    course: location.course >= 0 ? location.course : nil,
-                    courseAccuracy: location.courseAccuracy >= 0 ? location.courseAccuracy : nil
-                )
-                _ = writer.appendLocation(sample, wallTime: startedAt.addingTimeInterval(elapsed), elapsed: elapsed)
+                if let elapsed = elapsed(for: location.timestamp) {
+                    let sample = WatchLocationSample(
+                        sourceTime: location.timestamp,
+                        latitude: location.coordinate.latitude,
+                        longitude: location.coordinate.longitude,
+                        altitude: location.verticalAccuracy >= 0 ? location.altitude : nil,
+                        horizontalAccuracy: location.horizontalAccuracy,
+                        verticalAccuracy: location.verticalAccuracy >= 0 ? location.verticalAccuracy : nil,
+                        speed: location.speed >= 0 ? location.speed : nil,
+                        speedAccuracy: location.speedAccuracy >= 0 ? location.speedAccuracy : nil,
+                        course: location.course >= 0 ? location.course : nil,
+                        courseAccuracy: location.courseAccuracy >= 0 ? location.courseAccuracy : nil
+                    )
+                    _ = writer.appendLocation(sample, wallTime: startedAt.addingTimeInterval(elapsed), elapsed: elapsed)
+                }
+                if location.speed >= 0.5 {
+                    speedMetersPerSecond = location.speed
+                    splitSeconds = 500.0 / location.speed
+                } else if location.speed >= 0 {
+                    speedMetersPerSecond = location.speed
+                    if location.speed < 0.3 {
+                        splitSeconds = nil
+                    }
+                }
             }
         }
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        Task { @MainActor in status = "Recording · Watch GPS temporarily unavailable" }
+        Task { @MainActor in status = "Watch GPS temporarily unavailable" }
     }
 }
 
@@ -734,37 +902,98 @@ extension WatchRecorder: WCSessionDelegate {
     nonisolated func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
         Task { @MainActor in
             if let error { transferStatus = "Watch connection error: \(error.localizedDescription)" }
-            else if activationState == .activated { transferStatus = "Ready to transfer after recording" }
+            else if activationState == .activated { transferStatus = "Ready to record locally and transfer" }
         }
     }
 
     nonisolated func session(_ session: WCSession, didFinish fileTransfer: WCSessionFileTransfer, error: Error?) {
         Task { @MainActor in
-            transferStatus = error == nil ? "Transferred to iPhone" : "Transfer pending: \(error!.localizedDescription)"
+            transferStatus = error == nil ? "Transferred to iPhone · local copy retained" : "Transfer pending: \(error!.localizedDescription)"
+        }
+    }
+
+    private func applyConnectivityPayload(_ payload: [String: Any]) {
+        let command = payload["command"] as? String
+
+        if command == "startWorkout" {
+            if state == .idle || isFailed {
+                applyCorrelation(from: payload)
+                companionWorkoutConfiguration = nil
+                startRequest()
+            } else if state == .requestingPermissions, correlationIsCompatible(with: payload) {
+                applyCorrelation(from: payload)
+                publishRecordingState("starting")
+            }
+            else { publishRecordingState(isRecording ? "recording" : "busy") }
+        } else if command == "stopWorkout" || command == "stopAndSendRecording" {
+            if isRecording, correlationIsCompatible(with: payload) {
+                publishRecordingState("stopping")
+                stop()
+            } else if isRecording {
+                NSLog("[WatchRecorder] Ignoring stop request for a different phone recording")
+            }
+        } else if command == "recoverWatchArchives" {
+            recoverLocalArchives()
+        } else if command == "liveTelemetry" {
+            if let spm = (payload["strokeRateSpm"] as? NSNumber)?.doubleValue ?? payload["spm"] as? Double {
+                strokeRateSpm = spm > 0 ? spm : nil
+            }
+            if let speedKmh = (payload["speedKmh"] as? NSNumber)?.doubleValue, speedKmh > 1.0 {
+                let ms = speedKmh / 3.6
+                speedMetersPerSecond = ms
+                splitSeconds = 500.0 / ms
+            }
+        }
+    }
+
+    private func correlationIsCompatible(with payload: [String: Any]) -> Bool {
+        if let phoneSessionID {
+            guard let text = payload["phoneSessionID"] as? String,
+                  UUID(uuidString: text) == phoneSessionID else { return false }
+            return true
+        }
+        if let startRequestID {
+            guard payload["startRequestID"] as? String == startRequestID else { return false }
+        }
+        return true
+    }
+
+    private func applyCorrelation(from payload: [String: Any]) {
+        var changed = false
+        if let value = payload["phoneSessionID"] as? String,
+           let id = UUID(uuidString: value) {
+            phoneSessionID = id
+            changed = true
+        }
+        if let value = payload["startRequestID"] as? String, !value.isEmpty {
+            startRequestID = value
+            changed = true
+        }
+        if changed, databaseStarted {
+            writer.updateCorrelation(phoneSessionID: phoneSessionID, startRequestID: startRequestID)
         }
     }
 
     nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
-        let command = message["command"] as? String
+        Task { @MainActor in self.applyConnectivityPayload(message) }
+    }
+
+    nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any], replyHandler: @escaping ([String: Any]) -> Void) {
         Task { @MainActor in
-            if command == "stopWorkout", isRecording {
-                publishRecordingState("stopping")
-                stop()
-            } else if command == "recoverWatchArchives" {
-                recoverLocalArchives()
-            }
+            self.applyConnectivityPayload(message)
+            replyHandler([
+                "accepted": true,
+                "recordingState": self.isRecording ? "recording" : "starting",
+                "startRequestID": self.startRequestID ?? ""
+            ])
         }
     }
 
+    nonisolated func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
+        Task { @MainActor in self.applyConnectivityPayload(applicationContext) }
+    }
+
     nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
-        let command = userInfo["command"] as? String
-        Task { @MainActor in
-            if command == "stopWorkout", isRecording {
-                publishRecordingState("stopping")
-                stop()
-            } else if command == "recoverWatchArchives" {
-                recoverLocalArchives()
-            }
-        }
+        Task { @MainActor in self.applyConnectivityPayload(userInfo) }
     }
 }

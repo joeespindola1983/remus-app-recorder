@@ -114,6 +114,19 @@ final class WatchDatabaseWriter {
         }
     }
 
+    func updateCorrelation(phoneSessionID: UUID?, startRequestID: String?) {
+        queue.async { [weak self] in
+            guard let self, self.database != nil else { return }
+            self.manifest?.phoneSessionID = phoneSessionID
+            self.manifest?.startRequestID = startRequestID
+            do {
+                try self.writeManifest()
+            } catch {
+                self.report(error)
+            }
+        }
+    }
+
     func stop(at date: Date, failureMessage: String? = nil) -> WatchRecordingSession? {
         queue.sync {
             guard database != nil, let folderURL else { return nil }

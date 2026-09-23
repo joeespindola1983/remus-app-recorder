@@ -85,6 +85,10 @@ export class BridgeContract implements ITelemetryNativeBridge {
   async playBeep(isLoud: boolean): Promise<void> {
     return this.bridge.playBeep(isLoud);
   }
+
+  async requestWatchStopAndTransfer(timeoutMs?: number): Promise<boolean> {
+    return this.bridge.requestWatchStopAndTransfer(timeoutMs);
+  }
 }
 
 export const bridgeContract = new BridgeContract(telemetryBridge);

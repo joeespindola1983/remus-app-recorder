@@ -5,15 +5,82 @@ import CoreLocation
 import AudioToolbox
 import AVFoundation
 import WatchConnectivity
+import CoreBluetooth
 
 @objc(RemusTelemetryModule)
 class RemusTelemetryModule: RCTEventEmitter {
     private var recorder: SensorRecorder?
     private var activeSessionFolder: URL?
     private var activeSessionID: UUID?
+    private var lastStoppedFolder: URL?
+    private var lastStoppedSessionID: UUID?
     private var cancellables = Set<AnyCancellable>()
     private var permissionLocationManager: CLLocationManager?
     private var hornAudioPlayer: AVAudioPlayer?
+
+    // REMUS Hardware BLE
+    private var centralManager: CBCentralManager?
+    private var remusPeripheral: CBPeripheral?
+    private var remusCharacteristic: CBCharacteristic?
+    private let remusServiceUUID = CBUUID(string: "4fafc201-1fb5-459e-8fcc-c5c9c331914b")
+    private let remusCharUUID = CBUUID(string: "beb5483e-36e1-4688-b7f5-ea07361b26a8")
+
+    override init() {
+        super.init()
+        DispatchQueue.main.async { [weak self] in
+            self?.setupWatchTelemetryHandlers()
+        }
+    }
+
+    @MainActor
+    private func setupWatchTelemetryHandlers() {
+        WatchImportService.shared.onHeartRateReceived = nil
+        WatchImportService.shared.onWatchActiveChanged = nil
+        WatchImportService.shared.onRecordingStateReceived = { [weak self] payload in
+            guard let self, self.acceptsWatchPayload(payload) else { return }
+            let state = payload["recordingState"] as? String ?? "unknown"
+            let active = state == "recording"
+            self.sendEvent(withName: "onTelemetryUpdate", body: [
+                "watchActive": active,
+                "watchRecordingState": state
+            ])
+        }
+        WatchImportService.shared.onWatchTelemetryReceived = { [weak self] payload in
+            guard let self = self else { return }
+            guard self.acceptsWatchPayload(payload) else {
+                NSLog("[RemusTelemetryModule] Ignoring Watch payload from a different phone session")
+                return
+            }
+            let num = { (key: String) -> Double? in
+                if let n = payload[key] as? NSNumber { return n.doubleValue }
+                if let d = payload[key] as? Double { return d }
+                if let i = payload[key] as? Int { return Double(i) }
+                if let s = payload[key] as? String { return Double(s) }
+                return nil
+            }
+            if let hr = num("heartRate") ?? num("heartRateBpm"), hr > 0 {
+                self.sendEvent(withName: "onTelemetryUpdate", body: [
+                    "heartRateBpm": hr,
+                    "watchActive": true
+                ])
+            }
+            if let folder = self.activeSessionFolder ?? self.lastStoppedFolder {
+                self.appendWatchTelemetryCsv(payload: payload, folder: folder)
+            } else {
+                NSLog("[RemusTelemetryModule] Received watch telemetry but no active/stopped session folder available")
+            }
+        }
+    }
+
+    private func acceptsWatchPayload(_ payload: [String: Any]) -> Bool {
+        guard let text = payload["phoneSessionID"] as? String,
+              let payloadID = UUID(uuidString: text) else {
+            // Legacy Watch builds did not carry correlation. Accept them only while
+            // a phone recording is active, never into an arbitrary stopped session.
+            return activeSessionID != nil
+        }
+        return payloadID == activeSessionID || payloadID == lastStoppedSessionID
+    }
 
     @objc
     func requestPermissions(_ resolve: @escaping RCTPromiseResolveBlock,
@@ -91,7 +158,7 @@ class RemusTelemetryModule: RCTEventEmitter {
             let fallbackPath = "/Users/home/Downloads/bbc_motor-horn_07037284.mp3"
             let soundURL = Bundle.main.url(forResource: "motor_horn", withExtension: "mp3") ??
                            (FileManager.default.fileExists(atPath: fallbackPath) ? URL(fileURLWithPath: fallbackPath) : nil)
-            
+
             if let url = soundURL {
                 do {
                     try AVAudioSession.sharedInstance().setCategory(.ambient, mode: .default)
@@ -113,7 +180,7 @@ class RemusTelemetryModule: RCTEventEmitter {
     }
 
     override func supportedEvents() -> [String]! {
-        return ["onTelemetryUpdate"]
+        return ["onTelemetryUpdate", "onRemusDeviceTelemetry", "onRemusDeviceConnectionState", "onWatchTransferProgress"]
     }
 
     @objc
@@ -125,13 +192,18 @@ class RemusTelemetryModule: RCTEventEmitter {
             guard self.recorder == nil else { reject("ALREADY_RECORDING", "A recording is already in progress", nil); return }
             let recorder = SensorRecorder()
             self.recorder = recorder
-            
+
             Task { @MainActor () -> Void in
-                WatchImportService.shared.onHeartRateReceived = { [weak self] hr in
-                    self?.sendEvent(withName: "onTelemetryUpdate", body: ["heartRateBpm": hr, "watchActive": true])
-                }
-                WatchImportService.shared.onWatchActiveChanged = { [weak self] active in
-                    self?.sendEvent(withName: "onTelemetryUpdate", body: ["watchActive": active])
+                self.setupWatchTelemetryHandlers()
+                WatchImportService.shared.onWatchTransferProgress = { [weak self] pct, progress, status, sessionID, error in
+                    var body: [String: Any] = [
+                        "percentage": pct,
+                        "progress": progress,
+                        "status": status
+                    ]
+                    if let sessionID = sessionID { body["sessionID"] = sessionID }
+                    if let error = error { body["error"] = error }
+                    self?.sendEvent(withName: "onWatchTransferProgress", body: body)
                 }
             }
             
@@ -231,12 +303,17 @@ class RemusTelemetryModule: RCTEventEmitter {
             do {
                 let folder = try recorder.startImmediately(metadata: metadata)
                 _ = try RecordingContextStore.read(folder, capture: true)
+                self.lastStoppedFolder = nil
+                self.lastStoppedSessionID = nil
                 self.activeSessionFolder = folder
                 self.activeSessionID = sessionUUID
+                WatchImportService.setExplicitTargetFolder(folder)
                 if WCSession.isSupported() {
                     let session = WCSession.default
-                    if session.isPaired && session.isWatchAppInstalled {
-                        self.sendEvent(withName: "onTelemetryUpdate", body: ["watchActive": true])
+                    if session.isPaired {
+                        let watchCsvURL = folder.appendingPathComponent("watch.csv")
+                        let header = "timestamp_iso,elapsed_s,heart_rate_bpm,user_ax_g,user_ay_g,user_az_g,gravity_x_g,gravity_y_g,gravity_z_g,rotation_x_rads,rotation_y_rads,rotation_z_rads,roll_rad,pitch_rad,yaw_rad,latitude,longitude,speed_mps,accuracy_m,active_energy_kcal,battery_pct\n"
+                        try? header.write(to: watchCsvURL, atomically: true, encoding: .utf8)
                     }
                 }
                 resolve([
@@ -266,13 +343,24 @@ class RemusTelemetryModule: RCTEventEmitter {
             self.sendEvent(withName: "onTelemetryUpdate", body: ["watchActive": false])
             
             let folderURL = recorder.lastSessionURL
+            self.lastStoppedFolder = folderURL
+            self.lastStoppedSessionID = self.activeSessionID
             self.recorder = nil
+            self.activeSessionFolder = nil
+            self.activeSessionID = nil
+
+            // Attach any Watch recordings that arrived during this session directly to this session
+            if let folder = folderURL {
+                WatchImportService.setExplicitTargetFolder(folder)
+                WatchImportService.attachPendingImports(targetFolder: folder)
+            } else {
+                WatchImportService.attachPendingImports()
+            }
             
             guard let folder = folderURL else {
                 reject("STOP_ERROR", "Failed to retrieve session folder", nil)
                 return
             }
-
 
             let manifestURL = folder.appendingPathComponent("manifest.json")
             do {
@@ -289,6 +377,9 @@ class RemusTelemetryModule: RCTEventEmitter {
     func listSessions(_ resolve: @escaping RCTPromiseResolveBlock,
                       rejecter reject: @escaping RCTPromiseRejectBlock) {
         do {
+            // Process any pending Watch imports so badges and file lists are accurate
+            WatchImportService.attachPendingImports()
+
             let documents = try FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
             let root = documents.appendingPathComponent("RemusSessions", isDirectory: true)
             guard FileManager.default.fileExists(atPath: root.path) else {
@@ -320,7 +411,8 @@ class RemusTelemetryModule: RCTEventEmitter {
 
                 let duration = (manifest.endedAt ?? Date()).timeIntervalSince(manifest.startedAt)
                 let watchFolder = folder.appendingPathComponent("watch")
-                let hasWatch = FileManager.default.fileExists(atPath: watchFolder.path)
+                let hasWatch = FileManager.default.fileExists(atPath: folder.appendingPathComponent("watch.csv").path) ||
+                               FileManager.default.fileExists(atPath: watchFolder.path)
                 let contextData = try? Data(contentsOf: folder.appendingPathComponent(RecordingContextStore.filename))
                 let context = contextData.flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] }
 
@@ -383,6 +475,9 @@ class RemusTelemetryModule: RCTEventEmitter {
 
     private func exportArchive(_ sessionId: String, raw: Bool, resolve: RCTPromiseResolveBlock, reject: RCTPromiseRejectBlock) {
         do {
+            // Attach any pending Watch imports before generating the archive
+            WatchImportService.attachPendingImports()
+
             let documents = try FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
             let root = documents.appendingPathComponent("RemusSessions", isDirectory: true)
             let folder = try RecordingContextStore.resolve(root: root, id: sessionId)
@@ -406,6 +501,231 @@ class RemusTelemetryModule: RCTEventEmitter {
         DispatchQueue.main.async {
             WatchImportService.shared.requestWatchRecovery()
             resolve(true)
+        }
+    }
+
+    @objc
+    func requestWatchStopAndTransfer(_ resolve: @escaping RCTPromiseResolveBlock,
+                                    rejecter reject: @escaping RCTPromiseRejectBlock) {
+        DispatchQueue.main.async {
+            if let target = self.lastStoppedFolder ?? self.activeSessionFolder {
+                WatchImportService.setExplicitTargetFolder(target)
+            }
+
+            WatchImportService.shared.onWatchTransferProgress = { [weak self] pct, progress, status, sessionID, error in
+                var body: [String: Any] = [
+                    "percentage": pct,
+                    "progress": progress,
+                    "status": status
+                ]
+                if let sessionID = sessionID { body["sessionID"] = sessionID }
+                if let error = error { body["error"] = error }
+                self?.sendEvent(withName: "onWatchTransferProgress", body: body)
+            }
+
+            WatchImportService.shared.requestWatchStopAndTransfer { success, error in
+                if let error = error {
+                    reject("WATCH_TRANSFER_FAILED", error.localizedDescription, error)
+                } else {
+                    resolve(success)
+                }
+            }
+        }
+    }
+
+    @objc
+    func connectRemusBle(_ resolve: @escaping RCTPromiseResolveBlock,
+                         rejecter reject: @escaping RCTPromiseRejectBlock) {
+        DispatchQueue.main.async {
+            self.sendEvent(withName: "onRemusDeviceConnectionState", body: ["state": "scanning"])
+            if self.centralManager == nil {
+                self.centralManager = CBCentralManager(delegate: self, queue: nil)
+            } else if self.centralManager?.state == .poweredOn {
+                self.startBleScan()
+            }
+            resolve(true)
+        }
+    }
+
+    @objc
+    func disconnectRemusBle(_ resolve: @escaping RCTPromiseResolveBlock,
+                            rejecter reject: @escaping RCTPromiseRejectBlock) {
+        DispatchQueue.main.async {
+            if let peripheral = self.remusPeripheral {
+                self.centralManager?.cancelPeripheralConnection(peripheral)
+            }
+            self.remusPeripheral = nil
+            self.remusCharacteristic = nil
+            self.sendEvent(withName: "onRemusDeviceConnectionState", body: ["state": "disconnected"])
+            resolve(true)
+        }
+    }
+
+    @objc
+    func sendRemusBleCommand(_ command: String,
+                             resolver resolve: @escaping RCTPromiseResolveBlock,
+                             rejecter reject: @escaping RCTPromiseRejectBlock) {
+        DispatchQueue.main.async {
+            guard let peripheral = self.remusPeripheral,
+                  let characteristic = self.remusCharacteristic else {
+                reject("BLE_NOT_CONNECTED", "REMUS device not connected", nil)
+                return
+            }
+            guard let data = command.data(using: .utf8) else {
+                reject("INVALID_COMMAND", "Unable to encode command to UTF-8", nil)
+                return
+            }
+            let type: CBCharacteristicWriteType = characteristic.properties.contains(.write) ? .withResponse : .withoutResponse
+            peripheral.writeValue(data, for: characteristic, type: type)
+            resolve(true)
+        }
+    }
+
+    private func startBleScan() {
+        centralManager?.scanForPeripherals(withServices: [remusServiceUUID], options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
+    }
+}
+
+extension RemusTelemetryModule: CBCentralManagerDelegate, CBPeripheralDelegate {
+    func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        if central.state == .poweredOn {
+            startBleScan()
+        } else {
+            sendEvent(withName: "onRemusDeviceConnectionState", body: ["state": "disconnected"])
+        }
+    }
+
+    func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String : Any], rssi RSSI: NSNumber) {
+        self.remusPeripheral = peripheral
+        peripheral.delegate = self
+        central.stopScan()
+        central.connect(peripheral, options: nil)
+        sendEvent(withName: "onRemusDeviceConnectionState", body: ["state": "connecting", "name": peripheral.name ?? "REMUS"])
+    }
+
+    func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        self.remusPeripheral = peripheral
+        peripheral.delegate = self
+        peripheral.discoverServices(nil)
+        sendEvent(withName: "onRemusDeviceConnectionState", body: ["state": "connected", "name": peripheral.name ?? "REMUS"])
+    }
+
+    func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
+        self.remusPeripheral = nil
+        self.remusCharacteristic = nil
+        sendEvent(withName: "onRemusDeviceConnectionState", body: ["state": "disconnected"])
+    }
+
+    func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+        guard let services = peripheral.services else { return }
+        for service in services {
+            peripheral.discoverCharacteristics(nil, for: service)
+        }
+    }
+
+    func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
+        guard let characteristics = service.characteristics else { return }
+        for characteristic in characteristics {
+            if characteristic.uuid.uuidString.caseInsensitiveCompare(remusCharUUID.uuidString) == .orderedSame {
+                self.remusCharacteristic = characteristic
+                peripheral.setNotifyValue(true, for: characteristic)
+                peripheral.readValue(for: characteristic)
+            }
+        }
+    }
+
+    func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+        guard let data = characteristic.value else { return }
+        let csv = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
+        // Removed excessive logging of every received packet
+        sendEvent(withName: "onRemusDeviceTelemetry", body: ["csv": csv])
+
+        // Append to active session archive if currently recording
+        if let folder = self.activeSessionFolder {
+            let fileURL = folder.appendingPathComponent("remus_device.csv")
+            let line = csv.hasSuffix("\n") ? csv : "\(csv)\n"
+            if let fileHandle = try? FileHandle(forWritingTo: fileURL) {
+                fileHandle.seekToEndOfFile()
+                if let lineData = line.data(using: .utf8) {
+                    fileHandle.write(lineData)
+                }
+                fileHandle.closeFile()
+            } else {
+                let header = "timestamp_ms,ax_g,ay_g,az_g,gx_dps,gy_dps,gz_dps,lat,lon,ground_speed_kmh,sats,records_written,gps_chars,stroke_rate_spm,imu_ok,sd_ok,imu_gap_count,max_imu_gap_ms,buffer_overflow_count,imu_read_failure_count,speed_accuracy_mps,course_degrees,course_accuracy_degrees,fix_type,gps_itow_ms\n"
+                let initialContent = header + line
+                try? initialContent.write(to: fileURL, atomically: true, encoding: .utf8)
+            }
+        }
+
+        // Relay live telemetry to Apple Watch companion app
+        if WCSession.isSupported() {
+            let session = WCSession.default
+            if session.activationState == .activated && session.isReachable {
+                let parts = csv.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: ",")
+                var payload: [String: Any] = ["command": "liveTelemetry"]
+                if parts.count > 9, let speed = Double(parts[9]) {
+                    payload["speedKmh"] = speed
+                }
+                if parts.count > 13, let spm = Double(parts[13]) {
+                    payload["strokeRateSpm"] = spm
+                }
+                session.sendMessage(payload, replyHandler: nil, errorHandler: nil)
+            }
+        }
+    }
+
+    private func appendWatchTelemetryCsv(payload: [String: Any], folder: URL) {
+        let fileURL = folder.appendingPathComponent("watch.csv")
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+
+        let num = { (key: String) -> Double? in
+            if let n = payload[key] as? NSNumber { return n.doubleValue }
+            if let d = payload[key] as? Double { return d }
+            if let i = payload[key] as? Int { return Double(i) }
+            if let s = payload[key] as? String { return Double(s) }
+            return nil
+        }
+
+        let now = num("timestamp").map { Date(timeIntervalSince1970: $0) } ?? Date()
+        let isoTime = isoFormatter.string(from: now)
+        let elapsed = num("elapsed") ?? 0.0
+
+        let hrVal = num("heartRate") ?? num("heartRateBpm")
+        let hrStr = hrVal.map { String(format: "%.1f", $0) } ?? ""
+        let uAxStr = num("userAx").map { String(format: "%.4f", $0) } ?? ""
+        let uAyStr = num("userAy").map { String(format: "%.4f", $0) } ?? ""
+        let uAzStr = num("userAz").map { String(format: "%.4f", $0) } ?? ""
+        let gXStr = num("gravityX").map { String(format: "%.4f", $0) } ?? ""
+        let gYStr = num("gravityY").map { String(format: "%.4f", $0) } ?? ""
+        let gZStr = num("gravityZ").map { String(format: "%.4f", $0) } ?? ""
+        let rXStr = num("rotationX").map { String(format: "%.4f", $0) } ?? ""
+        let rYStr = num("rotationY").map { String(format: "%.4f", $0) } ?? ""
+        let rZStr = num("rotationZ").map { String(format: "%.4f", $0) } ?? ""
+        let rollStr = num("roll").map { String(format: "%.4f", $0) } ?? ""
+        let pitchStr = num("pitch").map { String(format: "%.4f", $0) } ?? ""
+        let yawStr = num("yaw").map { String(format: "%.4f", $0) } ?? ""
+        let latStr = num("latitude").map { String(format: "%.7f", $0) } ?? ""
+        let lonStr = num("longitude").map { String(format: "%.7f", $0) } ?? ""
+        let speedStr = num("speed").map { String(format: "%.2f", $0) } ?? ""
+        let accStr = num("accuracy").map { String(format: "%.1f", $0) } ?? ""
+        let energyStr = num("activeEnergy").map { String(format: "%.1f", $0) } ?? ""
+        let battStr = num("battery").map { String(format: "%.1f", $0) } ?? ""
+
+        let line = "\(isoTime),\(String(format: "%.2f", elapsed)),\(hrStr),\(uAxStr),\(uAyStr),\(uAzStr),\(gXStr),\(gYStr),\(gZStr),\(rXStr),\(rYStr),\(rZStr),\(rollStr),\(pitchStr),\(yawStr),\(latStr),\(lonStr),\(speedStr),\(accStr),\(energyStr),\(battStr)\n"
+
+        if let fileHandle = try? FileHandle(forWritingTo: fileURL) {
+            fileHandle.seekToEndOfFile()
+            if let lineData = line.data(using: .utf8) {
+                fileHandle.write(lineData)
+                NSLog("[RemusTelemetryModule] Appended watch CSV line to %@ (elapsed: %.1fs, hr: %@)", fileURL.lastPathComponent, elapsed, hrStr)
+            }
+            fileHandle.closeFile()
+        } else {
+            let header = "timestamp_iso,elapsed_s,heart_rate_bpm,user_ax_g,user_ay_g,user_az_g,gravity_x_g,gravity_y_g,gravity_z_g,rotation_x_rads,rotation_y_rads,rotation_z_rads,roll_rad,pitch_rad,yaw_rad,latitude,longitude,speed_mps,accuracy_m,active_energy_kcal,battery_pct\n"
+            let initialContent = header + line
+            try? initialContent.write(to: fileURL, atomically: true, encoding: .utf8)
+            NSLog("[RemusTelemetryModule] Created watch CSV with first line in %@", fileURL.lastPathComponent)
         }
     }
 }

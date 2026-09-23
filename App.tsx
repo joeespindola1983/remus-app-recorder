@@ -3,9 +3,10 @@ import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, StatusBar } fro
 import { RecorderScreen } from './src/screens/RecorderScreen';
 import { SessionsScreen } from './src/screens/SessionsScreen';
 import { WatchScreen } from './src/screens/WatchScreen';
+import { DeviceScreen } from './src/screens/DeviceScreen';
 import { t } from './src/i18n';
 
-type Tab = 'record' | 'sessions' | 'watch';
+type Tab = 'record' | 'sessions' | 'watch' | 'device';
 
 const App = () => {
   const [activeTab, setActiveTab] = useState<Tab>('record');
@@ -19,6 +20,7 @@ const App = () => {
         {activeTab === 'record' && <RecorderScreen onRecordingChange={setIsRecording} />}
         {activeTab === 'sessions' && <SessionsScreen />}
         {activeTab === 'watch' && <WatchScreen />}
+        {activeTab === 'device' && <DeviceScreen />}
       </View>
 
       {!isRecording && (
@@ -50,6 +52,16 @@ const App = () => {
             <Text style={styles.tabIcon}>⌚</Text>
             <Text style={[styles.tabLabel, activeTab === 'watch' && styles.tabLabelActive]}>
               {t('tabs.watch')}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.tabItem, activeTab === 'device' && styles.tabItemActive]}
+            onPress={() => setActiveTab('device')}
+          >
+            <Text style={styles.tabIcon}>📡</Text>
+            <Text style={[styles.tabLabel, activeTab === 'device' && styles.tabLabelActive]}>
+              {t('tabs.device')}
             </Text>
           </TouchableOpacity>
         </View>

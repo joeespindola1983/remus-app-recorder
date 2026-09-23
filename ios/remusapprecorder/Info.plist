@@ -34,15 +34,19 @@
 		<true/>
 	</dict>
 	<key>NSHealthShareUsageDescription</key>
-	<string>Remus Sensors reads heart rate data during your rowing sessions.</string>
+	<string>O Remus lê dados de frequência cardíaca durante suas sessões de remo.</string>
 	<key>NSHealthUpdateUsageDescription</key>
-	<string>Remus Sensors saves your rowing workouts to Apple Health.</string>
+	<string>O Remus salva seus treinos de remo no aplicativo Saúde da Apple.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>Remus Sensors uses your location to record rowing telemetry.</string>
+	<string>O Remus utiliza sua localização para registrar a telemetria do treino de remo.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Remus Sensors uses your location to track your rowing distance and speed.</string>
+	<string>O Remus utiliza sua localização para acompanhar distância, velocidade e trajeto de remo.</string>
 	<key>NSMotionUsageDescription</key>
-	<string>Remus Sensors needs accelerometer data to detect strokes at high frequency.</string>
+	<string>O Remus utiliza os sensores de aceleração e movimento para analisar o ritmo e a cadência das remadas em alta frequência.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Remus connects to your external REMUS hardware via Bluetooth to stream rowing telemetry.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>Remus connects to your external REMUS hardware via Bluetooth.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIRequiredDeviceCapabilities</key>

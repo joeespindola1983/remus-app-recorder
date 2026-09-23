@@ -126,3 +126,18 @@ test('bridgeContract: stopRecording normalizes raw manifest', async () => {
   assert.equal(manifest.headingSampleCount, 0);
   assert.equal(manifest.altimeterSampleCount, 0);
 });
+
+test('bridgeContract: requestWatchStopAndTransfer delegates to native bridge', async () => {
+  const { BridgeContract } = loadActual('src/contracts/bridgeContract.ts');
+  let requestedTimeout = null;
+  const mockBridge = {
+    requestWatchStopAndTransfer: async (timeout) => {
+      requestedTimeout = timeout;
+      return true;
+    }
+  };
+  const contract = new BridgeContract(mockBridge);
+  const result = await contract.requestWatchStopAndTransfer(5000);
+  assert.equal(result, true);
+  assert.equal(requestedTimeout, 5000);
+});

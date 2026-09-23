@@ -17,17 +17,17 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>2.5.1</string>
+	<string>2.6.0</string>
 	<key>CFBundleVersion</key>
-	<string>12</string>
+	<string>13</string>
 	<key>NSHealthShareUsageDescription</key>
-	<string>Remus reads heart rate, active energy and distance during your rowing workout.</string>
+	<string>O Remus lê sua frequência cardíaca, energia ativa e distância durante os treinos de remo.</string>
 	<key>NSHealthUpdateUsageDescription</key>
-	<string>Remus saves your completed rowing workout to Health.</string>
+	<string>O Remus salva seus treinos de remo no aplicativo Saúde.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Remus records the Watch GPS route, speed and course during an outdoor rowing workout.</string>
+	<string>O Remus grava a rota GPS, velocidade e rumo durante treinos ao ar livre no Apple Watch.</string>
 	<key>NSMotionUsageDescription</key>
-	<string>Remus records Apple Watch motion sensors to analyze rowing strokes.</string>
+	<string>O Remus utiliza os sensores de movimento do Apple Watch para analisar o ritmo e a cadência das remadas.</string>
 	<key>WKApplication</key>
 	<true/>
 	<key>WKBackgroundModes</key>
